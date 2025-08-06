@@ -528,6 +528,19 @@ cbuffer PerGeometry : register(b2)
 
 #	include "Common/ShadowSampling.hlsli"
 
+#	if defined(OIT)
+#		include "OIT/FragmentList.hlsli"
+#	endif
+
+float ComputeShadowVariance(float shadow)
+{
+    // Measure local gradient magnitude; classify "no variation" using a small threshold.
+    const float2 grad = float2(ddx(shadow), ddy(shadow));
+    const float v = abs(grad.x) + abs(grad.y) + fwidth(shadow);
+    const float epsilon = 1e-4;
+    return (v < epsilon) ? 1.0 : 0.0;
+}
+
 #	if defined(LIGHTING)
 float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPosition, uint eyeIndex, inout float shadowVariance)
 {
@@ -653,6 +666,9 @@ float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPositi
 }
 #	endif
 
+#if defined(OIT)
+[earlydepthstencil]
+#endif
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout = (PS_OUTPUT)0;
@@ -965,6 +981,10 @@ PS_OUTPUT main(PS_INPUT input)
 		psout.Diffuse.xyz = Color::LinearToSrgb(psout.Diffuse.xyz);
 	}
 #	endif
+#if defined(OIT)
+	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+	psout.Color2 = psout.Diffuse;
+#endif
 	return psout;
 }
 #endif

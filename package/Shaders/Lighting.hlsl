@@ -949,9 +949,18 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
 
+#	if defined(OIT)
+#		include "OIT/FragmentList.hlsli"
+#	endif
+
 #	include "Common/LightingEval.hlsli"
 
+#	if defined(OIT)
+[earlydepthstencil]
 PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
+#else
+PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
+#endif
 {
 	PS_OUTPUT psout;
 	uint eyeIndex = Stereo::GetEyeIndexPS(input.Position, VPOSOffset);
@@ -962,7 +971,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 	float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
 
-#	if defined(DEFERRED)
+#if defined(DEFERRED)
 	const bool inWorld = true;
 #	else
 	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
@@ -3330,6 +3339,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #	endif
 
+#if defined(OIT)
+	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+#endif
 	return psout;
 }
 #endif  // PSHADER

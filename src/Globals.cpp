@@ -16,6 +16,7 @@
 #include "Features/LODBlending.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
+#include "Features/OrderIndependentTransparency.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/RenderDoc.h"
 #include "Features/ScreenSpaceGI.h"
@@ -89,6 +90,7 @@ namespace globals
 		WeatherEditor weatherEditor{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
+		OrderIndependentTransparency orderIndependentTransparency{};
 
 		namespace llf
 		{

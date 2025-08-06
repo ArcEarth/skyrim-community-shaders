@@ -14,6 +14,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/Upscaling.h"
+#include "Features/OrderIndependentTransparency.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 
@@ -311,6 +312,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
+	globals::features::orderIndependentTransparency.PreSetStateDirty(isCompute);
 	func(isCompute);
 	globals::state->Draw();
 }
@@ -854,8 +856,10 @@ namespace Hooks
 		logger::info("Hooking BSShaderRenderTargets::Create");
 		stl::detour_thunk<BSShaderRenderTargets_Create>(REL::RelocationID(100458, 107175));
 
-		logger::info("Hooking BSShaderRenderTargets::Create::CreateRenderTarget(s)");
+		logger::info("Hooking BSShaderRenderTargets::Create::CreateRenderTarget(s) at {:x}", REL::RelocationID(100458, 107175).address() + REL::Relocate(0x3F0, 0x3F3, 0x548));
 		stl::write_thunk_call<CreateRenderTarget_Main>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x3F0, 0x3F3, 0x548));
+		//stl::write_thunk_call<CreateRenderTarget_Alpha>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x3F0, 0x3F3, 0x548) + 0x16);
+		//stl::write_thunk_call<CreateRenderTarget_Alpha2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x3F0, 0x3F3, 0x548) + 0x2C);
 		stl::write_thunk_call<CreateRenderTarget_Normals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x458, 0x45B, 0x5B0));
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		stl::write_thunk_call<CreateRenderTarget_MotionVectors>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x4F0, 0x4EF, 0x64E));
@@ -879,7 +883,7 @@ namespace Hooks
 
 		logger::info("Hooking Renderer::DispatchCSShader");
 		stl::detour_thunk<CSShadersSupport::Renderer_DispatchCSShader>(REL::RelocationID(75532, 77329));
-
+		
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
 

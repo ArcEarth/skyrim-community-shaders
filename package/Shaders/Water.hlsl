@@ -349,9 +349,11 @@ Texture2D<float4> FlowMapNormalsTex : register(t9);
 Texture2D<float4> SSRReflectionTex : register(t10);
 Texture2D<float4> RawSSRReflectionTex : register(t11);
 
+Texture2D<float4> AlphaOnlyTex : register(t66);
+
 cbuffer PerTechnique : register(b0)
 {
-#		if !defined(VR)
+#if !defined(VR)
 	float4 VPOSOffset : packoffset(c0);    // inverse main render target width and height in xy, 0 in zw
 	float4 PosAdjust[1] : packoffset(c1);  // inverse framebuffer range in w
 	float4 CameraDataWater : packoffset(c2);
@@ -990,9 +992,11 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(refractionUvRaw);
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
+	float4 refractionAlphaColor = AlphaOnlyTex.Sample(RefractionSampler, refractionUV);
+	refractionColor = (1.0 - refractionAlphaColor.w) * refractionColor + refractionAlphaColor.xyz;
 	float3 refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 
-#				if defined(UNDERWATER)
+#if defined(UNDERWATER)
 	float refractionMul = 0;
 #				else
 	float refractionMul = 1 - pow(saturate((-distanceMul.x * FogParam.z + FogParam.z) / FogParam.w), FogNearColor.w);

@@ -141,9 +141,19 @@ public:
 	void CheckTypedUAVLoadSupport();
 	void ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred = false);
 
+	struct PerfEvent
+	{
+		PerfEvent(const wchar_t* title);
+		PerfEvent(const PerfEvent&) = delete;
+		PerfEvent(PerfEvent&&) = default;
+		~PerfEvent();
+	};
+
 	void BeginPerfEvent(std::string_view title);
+	void BeginPerfEvent(const wchar_t* title);
 	void EndPerfEvent();
 	void SetPerfMarker(std::string_view title);
+	void SetPerfMarker(const wchar_t* title);
 
 	void SetAdapterDescription(const std::wstring& description);
 
@@ -192,7 +202,10 @@ public:
 		THLand4HasDisplacement = 1 << 4,
 		THLand5HasDisplacement = 1 << 5,
 		ETMaterialModel = 0b111 << 6,
-		THLandHasDisplacement = 1 << 9
+		THLandHasDisplacement = 1 << 9,
+		OITAdditive            = 1 << 10,
+		OITMultiplicative      = 1 << 11,
+		OITDepthWrite          = 1 << 12,
 	};
 
 	bool inWorld = false;

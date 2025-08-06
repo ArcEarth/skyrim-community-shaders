@@ -3,6 +3,10 @@
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
+#if defined(OIT)
+#include "OIT/FragmentList.hlsli"
+#endif
+
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
@@ -250,6 +254,9 @@ cbuffer PerGeometry : register(b2)
 #	define LinearSampler SampSourceTexture
 #	include "Common/ShadowSampling.hlsli"
 
+#ifdef OIT
+[earlydepthstencil]
+#endif
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -341,6 +348,9 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Normal.w = baseColor.w;
 	psout.Normal.xyz = float3(0, 1, 0);
 
+#if defined(OIT)
+	psout.Color = OIT_Capture(int2(input.Position.xy), psout.Color, input.Position.z);
+#endif
 	return psout;
 }
 #endif

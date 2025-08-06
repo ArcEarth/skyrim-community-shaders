@@ -146,6 +146,9 @@ namespace SIE
 					defines[lastIndex++] = { "GLINT", nullptr };
 				}
 			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::OIT)) {
+				defines[lastIndex++] = { "OIT", nullptr };
+			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Lighting)) {
@@ -300,7 +303,7 @@ namespace SIE
 		{
 			using enum ShaderCache::ParticleShaderTechniques;
 
-			const auto technique = static_cast<ShaderCache::ParticleShaderTechniques>(descriptor);
+			const auto technique = static_cast<ShaderCache::ParticleShaderTechniques>(descriptor & ~static_cast<uint32_t>(ShaderCache::ParticleShaderFlags::OIT));
 			size_t lastIndex = 0;
 			switch (technique) {
 			case ParticlesGryColor:
@@ -331,6 +334,9 @@ namespace SIE
 					defines[lastIndex++] = { "RAIN", nullptr };
 					break;
 				}
+			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::ParticleShaderFlags::OIT)) {
+				defines[lastIndex++] = { "OIT", nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
@@ -427,6 +433,10 @@ namespace SIE
 
 			if (descriptor & static_cast<uint32_t>(ShaderCache::EffectShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
+			}
+
+			if (descriptor & static_cast<uint32_t>(ShaderCache::EffectShaderFlags::OIT)) {
+				defines[lastIndex++] = { "OIT", nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
