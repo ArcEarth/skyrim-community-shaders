@@ -17,9 +17,25 @@
 #ifndef H_FRAGMENT_LIST
 #define H_FRAGMENT_LIST
 
+#if !defined(OIT_WRITE_DEPTH)
+#define OIT_WRITE_DEPTH 0
+#endif
 // #include "../../../../package/Shaders/Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Permutation.hlsli"
+
+#define OIT_FEATURE_FLAGS_SHIFT    10
+#define OIT_FLAGS_ADDITIVE         0x1UL
+#define OIT_FLAGS_MULTIPLICATIVE   0x2UL
+#define OIT_FLAGS_MULTIPLICATIVE_A 0x3UL
+#define OIT_FLAGS_BLEND_MODS       0x3UL
+
+#define OIT_FLAGS_DEPTH_WRITE      0x4UL
+#define OIT_FLAGS_BITS             0x7UL
+
+#if !defined(OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD)
+#define OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD 0
+#endif
 
 //////////////////////////////////////////////
 // Structs
@@ -57,14 +73,19 @@ int2 FL_GetDimensions()
 // flags have 4 bits
 float FL_PackDepthAndFlags(in float depth, in uint flags)
 {
+#if OIT_WRITE_DEPTH
+	// return -depth;
+	return !(flags & OIT_FLAGS_DEPTH_WRITE) ? depth : -depth;
+#else
 	return depth;
+#endif
 	//return asfloat((asuint(depth) & 0xFFFFFFF0UL) | flags);
 }
 
 void FL_UnpackDepthAndFlags(in float packedDepthCovg, out float depth, out uint flags)
 {
-	depth = packedDepthCovg;
-	flags = 0;
+	depth = abs(packedDepthCovg);
+	flags = packedDepthCovg < 0 ? OIT_FLAGS_DEPTH_WRITE : 0;
 	//uint uiPackedDepthCovg = asuint(packedDepthCovg);
 	//depth = asfloat(uiPackedDepthCovg & 0xFFFFFFF0UL);
 	//flags = uiPackedDepthCovg & 0xFUL;
@@ -122,27 +143,45 @@ float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
 	if (depth > SharedData::orderIndependentTransparencySettings.DepthThreshold)
 		return color;
 
-	uint flags = ((Permutation::ExtraFeatureDescriptor >> 10) & 0x3);
-
+	uint flags = ((Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT) & OIT_FLAGS_BITS);
+	uint blend = flags & OIT_FLAGS_BLEND_MODS;
 	// uniform branching to skip OIT for multiplicative blend when not supported
-	[branch]
-	if ((flags & 0x2) && (SharedData::orderIndependentTransparencySettings.Flags == 0))
+	if ((blend & OIT_FLAGS_MULTIPLICATIVE) && (SharedData::orderIndependentTransparencySettings.Flags == 0))
 		return color;
 
-	float4 zero = (flags & 0x2) ? float4(1, 1, 1, 1) : float4(0, 0, 0, 0);
+	float4 zero = (blend & OIT_FLAGS_MULTIPLICATIVE) ? float4(1, 1, 1, 1) : float4(0, 0, 0, 0);
 	
 	float4 incolor = color;
-	[flatten]
-	if (flags & 0x1) // additive blend
+
+#if !OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD
+	color.w = max(0.f, color.w - SharedData::orderIndependentTransparencySettings.AlphaThreshold) / (1.f - SharedData::orderIndependentTransparencySettings.AlphaThreshold);
+#endif
+
+	if (blend == OIT_FLAGS_MULTIPLICATIVE_A)
+		color = float4(0, 0, 0, (1 - color.w) * color.a);
+	else if (blend == OIT_FLAGS_ADDITIVE) // additive blend
 		color = float4(color.xyz * color.w, 0.f);
-	else if (flags & 0x2) // multiplicative blend, fully supported needs per channel alpha
-		color = float4(0, 0, 0, 1 - color.x);
+	else if (blend == OIT_FLAGS_MULTIPLICATIVE) // multiplicative blend, fully supported needs per channel alpha
+		color = float4(0, 0, 0, 1 - color.a);
 	else // regular alpha blend
 		color = float4(color.xyz * color.w, color.w);
+
+#if 0
+#if OIT_WRITE_DEPTH
+	if (flags & OIT_FLAGS_DEPTH_WRITE)
+		color = float4(1, 0, 0, 1);
+#endif
+	if (blend == OIT_FLAGS_MULTIPLICATIVE_A)
+		color = float4(0, 1, 0, 1);
+	else if (blend == OIT_FLAGS_ADDITIVE) // additive blend
+		color = float4(0, 0, 1, 1);
+	else if (blend == OIT_FLAGS_MULTIPLICATIVE) // multiplicative blend, fully supported needs per channel alpha
+		color = float4(0, 1, 1, 1);
+#endif	
 	
-	int packed = FL_PackColor(color);
+	uint packed = FL_PackColor(color);
 	// discard fully transparent pixels
-	if (packed == 0x00000000 || all(color <= SharedData::orderIndependentTransparencySettings.AlphaThreshold.xxxx))
+	if (packed == 0x00000000UL)
 		return zero;
 
 	uint newNodeAddress;

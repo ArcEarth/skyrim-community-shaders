@@ -48,6 +48,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	include "Common/Permutation.hlsli"
 #	include "Common/Random.hlsli"
 #	include "Common/Color.hlsli"
+#	include "Common/MotionBlur.hlsli"
 
 #	define WATER
 
@@ -343,7 +344,7 @@ TextureCube<float4> CubeMapTex : register(t3);
 Texture2D<float4> Normals01Tex : register(t4);
 Texture2D<float4> Normals02Tex : register(t5);
 Texture2D<float4> Normals03Tex : register(t6);
-Texture2D<float4> DepthTex : register(t7);
+Texture2D<unorm float> DepthTex : register(t7);
 Texture2D<float4> FlowMapTex : register(t8);
 Texture2D<float4> FlowMapNormalsTex : register(t9);
 Texture2D<float4> SSRReflectionTex : register(t10);
@@ -353,7 +354,7 @@ Texture2D<float4> AlphaOnlyTex : register(t66);
 
 cbuffer PerTechnique : register(b0)
 {
-#if !defined(VR)
+#		if !defined(VR)
 	float4 VPOSOffset : packoffset(c0);    // inverse main render target width and height in xy, 0 in zw
 	float4 PosAdjust[1] : packoffset(c1);  // inverse framebuffer range in w
 	float4 CameraDataWater : packoffset(c2);
@@ -906,7 +907,7 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 
 float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
 {
-	float depth = DepthTex.Load(float3(screenPosition, 0)).x;
+	float depth = DepthTex.Load(float3(screenPosition, 0));
 #			if defined(VR)  // VR appears to use hard coded values
 	return depth * 1.01 + -0.01;
 #			else
@@ -976,27 +977,33 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float refractionPlaneMul = (1 - ReflectPlane[eyeIndex].w / refractionViewSurfaceAngle);
 
-	if (refractionPlaneMul < 0.0) {
+	if (refractionPlaneMul < 0.0) { 
 		refractionUvRaw = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
 	} else {
 		distanceMul = saturate(refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
+	}
 
 #					if defined(VR)
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), DepthTex.Load(float3(refractionScreenPosition, 0)), 1));
 #					else
-		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
+		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRaw * 2 - 1) * float2(1, -1), DepthTex.Load(float3(refractionScreenPosition, 0)), 1));
 #					endif
 		refractionWorldPosition.xyz /= refractionWorldPosition.w;
-	}
+
+	// Blend in alpha texture from last frame
+	float2 cameraMotionVector = -MotionBlur::GetSSMotionVector2(refractionWorldPosition, eyeIndex);
+#else
+	float2 cameraMotionVector = 0;
 #				endif
 
 	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(refractionUvRaw);
+	float2 refractionAlphaUV = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(refractionUvRaw - cameraMotionVector);
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
-	float4 refractionAlphaColor = AlphaOnlyTex.Sample(RefractionSampler, refractionUV);
-	refractionColor = (1.0 - refractionAlphaColor.w) * refractionColor + refractionAlphaColor.xyz;
+	float4 refractionAlphaColor = AlphaOnlyTex.Sample(RefractionSampler, refractionAlphaUV);
+	refractionColor = (1.0 - refractionAlphaColor.w) * refractionColor + refractionAlphaColor.xyz * refractionAlphaColor.w;
 	float3 refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 
-#if defined(UNDERWATER)
+#				if defined(UNDERWATER)
 	float refractionMul = 0;
 #				else
 	float refractionMul = 1 - pow(saturate((-distanceMul.x * FogParam.z + FogParam.z) / FogParam.w), FogNearColor.w);

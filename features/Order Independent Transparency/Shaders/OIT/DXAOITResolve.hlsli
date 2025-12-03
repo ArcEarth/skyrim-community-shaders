@@ -1,13 +1,9 @@
-#pragma once
-
+#ifndef DXAOITRESOLVE_H
+#define DXAOITRESOLVE_H
 #define OIT_RESOLVE 1
 
 #include "OIT/DXAOIT.hlsli"
 #include "OIT/FragmentList.hlsli"
-
-#define OIT_FLAGS_ADDITIVE       0x1UL
-#define OIT_FLAGS_MULTIPLICATIVE 0x2UL
-#define OIT_FLAGS_DEPTH_WRITE    0x4UL
 
 #if defined(OIT_DEBUG)
 #define OIT_RESOLVE_FUNC AOITDebug
@@ -19,7 +15,11 @@
 
 Texture2D<unorm float> TexWaterDepth : register(t2);
 
-void AOITDebug(uint2 screenAddress, out float4 color, out float4 wcolor)
+void AOITDebug(uint2 screenAddress, out float4 color, out float4 wcolor
+#if OIT_WRITE_DEPTH
+	, out float odepth
+#endif
+)
 {
 	const float3 colors[8] =
 	{
@@ -48,7 +48,11 @@ void AOITDebug(uint2 screenAddress, out float4 color, out float4 wcolor)
 	wcolor = float4(0, 0, 0, 1);
 }
 
-void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor)
+void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor
+#if OIT_WRITE_DEPTH
+	, out float odepth
+#endif
+)
 {
 	uint i;
 	uint nodeOffset;
@@ -57,6 +61,9 @@ void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor)
 	uint firstNodeOffset = FL_GetFirstNodeOffset(screenAddress);
 	float waterDepth = TexWaterDepth[screenAddress];
 	waterDepth = waterDepth > 0.f ? waterDepth : OIT_EMPTY_NODE_DEPTH;
+#if OIT_WRITE_DEPTH
+	odepth = waterDepth;
+#endif
 
 	FragmentListNode node;
 	AOITData data;
@@ -105,6 +112,10 @@ void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor)
 		float depth;
 		uint flags;
 		FL_UnpackDepthAndFlags(node.depth, depth, flags);
+#if OIT_WRITE_DEPTH
+		if (flags & OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
+#endif
+		
 		float4 nodeColor = FL_UnpackColor(node.color);
 		
 		AOITFragment frag = AOITFindFragment(data, depth);
@@ -133,7 +144,11 @@ void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor)
 	owcolor = float4(wcolor, wtrans);
 }
 
-void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor)
+void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor
+#if OIT_WRITE_DEPTH
+	, out float odepth
+#endif
+)
 {
 	// Get offset to the first node
 	uint firstNodeOffset = FL_GetFirstNodeOffset(screenAddress);
@@ -158,6 +173,9 @@ void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 
 		float depth;
 		uint flags;
 		FL_UnpackDepthAndFlags(node.depth, depth, flags);
+#if OIT_WRITE_DEPTH
+		if (flags | OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
+#endif
 		float4 color = FL_UnpackColor(node.color);
 		float a = max(0.01, color.w); // wboit does not support additive natrually
 	
@@ -189,3 +207,4 @@ void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 
 
 	owcolor = float4(color, trans);
 }
+#endif

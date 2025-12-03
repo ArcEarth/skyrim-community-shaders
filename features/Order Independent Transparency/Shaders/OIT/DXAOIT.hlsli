@@ -254,12 +254,12 @@ void AOITInsertFragment(in float fragmentDepth,
 		// Find the node the generates the smallest removal error
 		int smallestErrorIdx = startRemovalIdx;
 		i = startRemovalIdx;
-		float smallestError = (depth[i] - depth[i - 1]) * (trans[i - 1] - trans[i]);
+		float smallestError = /*(depth[i] - depth[i - 1]) * */(trans[i - 1] - trans[i]);
 
 		[unroll]
 		for (i = startRemovalIdx + 1; i < removalCandidateCount; ++i)
 		{
-			float currentError = (depth[i] - depth[i - 1]) * (trans[i - 1] - trans[i]);
+			float currentError = /*(depth[i] - depth[i - 1]) * */(trans[i - 1] - trans[i]);
 			[flatten]
 			if (currentError < smallestError)
 			{

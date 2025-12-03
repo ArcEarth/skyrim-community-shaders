@@ -41,7 +41,9 @@ struct OrderIndependentTransparency : Feature
 		float	DistanceThreshold = 60'000.f; // Distance to camera before enabling OIT, to exclude large & complex distant volumetric fogs
 		bool	CaptureMultiplicativeLayer = true; // Whether to support multiplicative blend mode
 		bool	OverrideRenderTargets = false; // Force override render target in alpha pass, only use you having issue
-		bool	UsePixelShader = false; // Whether to use pixel shader or compute shader for OIT resolve
+		bool	UsePixelShader = true; // Whether to use pixel shader or compute shader for OIT resolve
+		bool	WriteDepth = true; // Allow the OIT composition to write depth for closest mesh with 'Write Depth' flag
+		float	WriteDepthThreshold = 0.f; // Don't write depth if the layer's alpha is below this threshold
 	};
 
 	struct alignas(16) FeatureCB
@@ -79,9 +81,10 @@ struct OrderIndependentTransparency : Feature
 	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return false; };
 
-	void PreSetStateDirty(bool isCompute);
+	void PreSetStateDirty();
 	void PreDrawHack();
 	void SetupGeometry(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags);
+	void RestoreGeometry(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags);
 	void BeginAlphaGroup();
 	void EndAlphaGroup();
 	void BeginWater();
@@ -119,6 +122,7 @@ struct OrderIndependentTransparency : Feature
 	RE::NiPoint3								cameraPos;
 	RE::NiTransform								cameraWorldInverse;
 	bool										closeEnough = false;
+	bool										drawWriteDepth = false;
 
 	// States
 	bool inAlphaPass = false;  // Whether we are in alpha pass of the render

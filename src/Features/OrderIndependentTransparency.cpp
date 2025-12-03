@@ -53,18 +53,19 @@ struct Renderer_Flush
 		// And called renderer flush in sub_1414EA1B0 + 0x5E
 		// So we have to hook in this level
 		auto& oit = globals::features::orderIndependentTransparency;
-		if (oit.inAlphaPass)
-		{
-			globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-			globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
+		oit.PreSetStateDirty();
+		//if (oit.inAlphaPass)
+		//{
+		//	globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+		//	globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
 
-			// Force depth to test only (not write)
-			auto shadowState = globals::game::shadowState;
-			GET_INSTANCE_MEMBER(depthStencil, shadowState);
-			GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState);
-			depthStencil = 0;
-			depthStencilDepthMode = RE::BSGraphics::DepthStencilDepthMode::kTest;
-		}
+		//	// Force depth to test only (not write)
+		//	auto shadowState = globals::game::shadowState;
+		//	GET_INSTANCE_MEMBER(depthStencil, shadowState);
+		//	GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState);
+		//	depthStencil = 0;
+		//	depthStencilDepthMode = RE::BSGraphics::DepthStencilDepthMode::kTest;
+		//}
 		func(renderer, flags);
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
@@ -99,6 +100,32 @@ void OrderIndependentTransparency::DataLoaded()
 
 void OrderIndependentTransparency::DrawSettings()
 {
+	struct DirtyFlags
+	{
+		bool PixelBuffer = false;
+		bool ConstantBuffer = false;
+		bool CompositionShader = false;
+
+		~DirtyFlags()
+		{
+			auto& oit = globals::features::orderIndependentTransparency;
+			if (ConstantBuffer) {
+				oit.featureCB.AlphaThreshold = oit.settings.AlphaThreshold;
+				oit.featureCB.DepthThreshold = oit.settings.DepthThreshold;
+			}
+			if (PixelBuffer) {
+				auto* renderer = globals::game::renderer;
+				auto& mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+				D3D11_TEXTURE2D_DESC mainDesc;
+				mainTex.texture->GetDesc(&mainDesc);
+				oit.AllocateFragmentListNodes(oit.settings.BufferSize * mainDesc.Width * mainDesc.Height);
+			}
+			if (CompositionShader) {
+				oit.ClearShaderCache();
+			}
+		}
+	} dirtied;
+
 	if (ImGui::TreeNodeEx("Method", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		ImGui::RadioButton("Disable", (int*)&settings.Method, Method::Disabled);
@@ -129,7 +156,7 @@ void OrderIndependentTransparency::DrawSettings()
 	}
 	ImGui::Spacing();
 	if (ImGui::TreeNodeEx("Compatibility", ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (ImGui::Checkbox("Multiplicative Blend Support (*)", (bool*)&settings.CaptureMultiplicativeLayer))
+		if (ImGui::Checkbox("Multiplicative Blend Support (*)", &settings.CaptureMultiplicativeLayer))
 		{
 			featureCB.Flags = settings.CaptureMultiplicativeLayer ? 1 : 0;
 		}
@@ -137,17 +164,24 @@ void OrderIndependentTransparency::DrawSettings()
 			ImGui::Text("Whether to support multiplicative blend layer as __grayscale__ in OIT.\n"
 						"(*) Colored multiplicative layer is __not__ supported.\n");
 		}
-		ImGui::Checkbox("Enforce Render Target (*)", (bool*)&settings.OverrideRenderTargets);
+		ImGui::Checkbox("Enforce Render Target (*)", &settings.OverrideRenderTargets);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Force to override the transparent render target on every draw call.\n"
 						"(*) Have a CPU cost, only enable this option if your alpha mesh is disappearing.\n"
 						"(*) This option can only affect AE for now, needs more RE for SSE/VR version.");
 		}
-		ImGui::Checkbox("Use Pixel Shader (EXPERIMENTAL) (*)", (bool*)&settings.UsePixelShader);
+		ImGui::Checkbox("Use Pixel Shader (*)", &settings.UsePixelShader);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Use pixel shader instead of compute shader for OIT resolve.\n"
 						"(*) Mostly for performance compare, we will settle with PS or CS eventually.");
 		}
+		if (!settings.UsePixelShader) ImGui::BeginDisabled();
+		dirtied.CompositionShader |= ImGui::Checkbox("Write Depth (*)", &settings.WriteDepth);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Allow OIT composition to write depth when meshes have the 'Write Depth' flag.\n"
+						"(*) Only aviable for Pixel Shader.");
+		}
+		if (!settings.UsePixelShader) ImGui::EndDisabled();
 		ImGui::TreePop();
 	}
 	ImGui::Spacing();
@@ -160,53 +194,42 @@ void OrderIndependentTransparency::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("CPU Time spend issuing the OIT composition draw");
 		}
-		bool bufferChanged = ImGui::SliderInt("Pixel Buffer Size", (int*)&settings.BufferSize, 2, 16);
+		dirtied.PixelBuffer |= ImGui::SliderInt("Pixel Buffer Size", (int*)&settings.BufferSize, 2, 16);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Multiplier of the back buffer size for holding transparent layers.\n"
 						"You may experience flickering when this buffer is overflowed.\n"
 						"Adjust based on your system's performance and memory capacity.");
 		}
-		bool layerChanged = ImGui::SliderInt("Max Layers", (int*)&settings.MaxLayers, 4, 32);
+		if (settings.Method != Method::AdaptiveTransparency) ImGui::BeginDisabled();
+		dirtied.CompositionShader |= ImGui::SliderInt("Max Layers", (int*)&settings.MaxLayers, 4, 32);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Maximum layers to blend in OIT composition\n"
 						"Layers exceeding this limit may introduce rendering artifacts\n"
 						"Increasing this value can have performance impact.");
 		}
-		bool thresholdChanged = ImGui::SliderFloat("Alpha Cutoff", &settings.AlphaThreshold, 0.0f, 0.1f, "%.3f");
+		if (settings.Method != Method::AdaptiveTransparency) ImGui::EndDisabled();
+		dirtied.ConstantBuffer |= ImGui::SliderFloat("Alpha Cutoff", &settings.AlphaThreshold, 0.0f, 0.1f, "%.3f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Alpha cutoff below which pixels are discarded.\n"
 						"Increase this value to improve performance slightly but could have noticeable artifact.\n"
 						"For example, increasing this value beyond 0.01 may cause rain particles to fade.");
 		}
-		thresholdChanged |= ImGui::SliderFloat("Depth Cutoff", &settings.DepthThreshold, 0.9f, 1.0f, "%.4f");
+		dirtied.ConstantBuffer |= ImGui::SliderFloat("Depth Cutoff", &settings.DepthThreshold, 0.9f, 1.0f, "%.4f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Camera space depth threshold to prevent z-fighting on 32 bits float precision limit.\n"
 						"Decreasing this value if you notice z-fighting on overlapping transparent surfaces.\n"
 						"However, decreasing this value too much may cause some surfaces to disappear.");
 		}
-		ImGui::SliderFloat("Distance Threshold", &settings.DistanceThreshold, 0.f, 500'000.f, "%.0f units");
+		ImGui::BeginDisabled();
+		ImGui::SliderFloat("Distance Threshold (BUGGED ATM)", &settings.DistanceThreshold, 0.f, 500'000.f, "%.0f units");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Distance to camera before enabling OIT, to exclude large & complex distant volumetric fogs.\n"
 						"Try decrease this value if you notice performance drop or flickering at distant foggy landscape."
 						"Use `Visualize` mode to help you adjust this value to exclude the distant fogs."
 						"1 `unit` = 1.428cm or 0.5625\"");
 		}
+		ImGui::EndDisabled();
 		ImGui::TreePop();
-		if (thresholdChanged) {
-			featureCB.AlphaThreshold = settings.AlphaThreshold;
-			featureCB.DepthThreshold = settings.DepthThreshold;
-		}
-		if (bufferChanged) {
-			auto* renderer = globals::game::renderer;
-			auto& mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			D3D11_TEXTURE2D_DESC mainDesc;
-			mainTex.texture->GetDesc(&mainDesc);
-			AllocateFragmentListNodes(settings.BufferSize * mainDesc.Width * mainDesc.Height);
-		}
-		if (layerChanged) 
-		{
-			ClearShaderCache();
-		}
 	}
 }
 
@@ -252,7 +275,7 @@ void OrderIndependentTransparency::SetupResources()
 		SetupRenderTarget(RE::RENDER_TARGETS::kMAIN_ONLY_ALPHA, mainDesc, srvDesc, rtvDesc, uavDesc, mainDesc.Format, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
 	}
 
-	logger::info("Setting up Order Independent Transparency resources...");
+	logger::info("[OIT] Setting up Order Independent Transparency resources...");
 	{
 		auto texDesc = mainDesc;
 		// CD3D11_TEXTURE2D_DESC texDesc;
@@ -333,8 +356,25 @@ void OrderIndependentTransparency::SetupResources()
 		}
 	}
 
+	{
+		auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		auto& postWaterCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_WATER_COPY];
+
+		D3D11_TEXTURE2D_DESC texDesc;
+		mainDepth.texture->GetDesc(&texDesc);
+		DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, NULL, &postWaterCopy.texture));
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		mainDepth.depthSRV->GetDesc(&srvDesc);
+		DX::ThrowIfFailed(device->CreateShaderResourceView(postWaterCopy.texture, &srvDesc, &postWaterCopy.depthSRV));
+
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+		mainDepth.views[0]->GetDesc(&dsvDesc);
+		DX::ThrowIfFailed(device->CreateDepthStencilView(postWaterCopy.texture, &dsvDesc, &postWaterCopy.views[0]));
+	}
+
 	CompileShaders();
-	logger::info("Order Independent Transparency resources setup complete.");
+	logger::info("[OIT] Order Independent Transparency resources setup complete.");
 }
 
 void OrderIndependentTransparency::ClearShaderCache()
@@ -356,7 +396,7 @@ void OrderIndependentTransparency::CompileShaders()
 	char nodesStr[4] = { 0 };
 	std::to_chars(nodesStr, nodesStr + 4, nodes);
 
-	logger::info("Compiling Order Independent Transparency shaders, OIT_NODE_COUNT={}...", nodesStr);
+	logger::info("[OIT] Compiling Order Independent Transparency shaders, OIT_NODE_COUNT={}...", nodesStr);
 
 	if (!resolveCS)
 	{
@@ -392,7 +432,8 @@ void OrderIndependentTransparency::CompileShaders()
 		}
 	}
 	if (!resolvePS) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.ps.hlsl", { { "OIT_NODE_COUNT", nodesStr } }, "ps_5_0"))) {
+		const char* writeDepthDefine = settings.WriteDepth ? "1" : "0";
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.ps.hlsl", { { "OIT_NODE_COUNT", nodesStr }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
 			resolvePS.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency resolve pixel shader.");
@@ -453,14 +494,15 @@ void OrderIndependentTransparency::AllocateFragmentListNodes(uint numElem)
 
 enum AlphaBlendMode : uint32_t
 {
-	kAlpha = 1,
-	kAdditive = 2,
-	kMultiplicative = 4,
+	kAlpha = 1,              //  src.rgb * src.a + dst.rgb * (1 - src.a)
+	kAdditive = 2,           //  src.rgb * src.a + dst.rgb *  1
+	kMultiplicativeAlpha = 3,//                    dst.rgb * (src.rgb + 1 - src.a)
+	kMultiplicative = 4,     //                    dst.rgb *  src.rgb
 };
 
-void OrderIndependentTransparency::PreSetStateDirty(bool)
+void OrderIndependentTransparency::PreSetStateDirty()
 {
-	if (!inAlphaPass) {
+	if (!inAlphaPass /*|| !closeEnough*/) {
 		return;
 	}
 	globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -470,20 +512,30 @@ void OrderIndependentTransparency::PreSetStateDirty(bool)
 	auto shadowState = globals::game::shadowState;
 	GET_INSTANCE_MEMBER(depthStencil, shadowState);
 	GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState);
+
+	// Setup depth write descriptor, depth write will be skipped in capture pass
+	//using enum RE::BSGraphics::DepthStencilDepthMode;
+	//if (/*settings.WriteDepth && */ (depthStencilDepthMode == kWrite || depthStencilDepthMode == kTestWrite)) {
+	//	// logger::info("PreSetStateDirty requests depth write @ draw {}.", drawIndex);
+	//	drawWriteDepth = drawIndex;
+	//}
+
 	depthStencil = 0;
 	depthStencilDepthMode = RE::BSGraphics::DepthStencilDepthMode::kTest;
 }
 
 void OrderIndependentTransparency::PreDrawHack()
 {
-	static constexpr uint OITAddtiveDescriptor = std::to_underlying(State::ExtraFeatureDescriptors::OITAdditive);
-	static constexpr uint OITMultiplicativeDescriptor = std::to_underlying(State::ExtraFeatureDescriptors::OITMultiplicative);
-	static constexpr uint OITDepthWriteDescriptor = std::to_underlying(State::ExtraFeatureDescriptors::OITDepthWrite);
+	using enum State::ExtraFeatureDescriptors;
+	static constexpr uint OITAddtiveDescriptor = std::to_underlying(OITAdditive);
+	static constexpr uint OITMultiplicativeDescriptor = std::to_underlying(OITMultiplicative);
+	static constexpr uint OITMultiplicativeAlphaDescriptor = std::to_underlying(OITMultiplicative) | std::to_underlying(OITAdditive);
+	static constexpr uint OITDepthWriteDescriptor = std::to_underlying(OITDepthWrite);
 
 	auto& descriptor = globals::state->permutationData.ExtraFeatureDescriptor;
 	descriptor &= ~(OITAddtiveDescriptor | OITMultiplicativeDescriptor | OITDepthWriteDescriptor);
 
-	if (!inAlphaPass) {
+	if (!inAlphaPass/* || !closeEnough*/) {
 		return;
 	}
 
@@ -491,7 +543,7 @@ void OrderIndependentTransparency::PreDrawHack()
 	GET_INSTANCE_MEMBER(alphaBlendMode, shadowState);
 	GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState);
 
-	if (alphaBlendMode == 3 || alphaBlendMode > 4) [[unlikely]] {
+	if (alphaBlendMode > 4) [[unlikely]] {
 		winrt::com_ptr<ID3D11BlendState> blend = nullptr;
 		globals::d3d::context->OMGetBlendState(blend.put(), nullptr, nullptr);
 		D3D11_BLEND_DESC desc;
@@ -499,26 +551,30 @@ void OrderIndependentTransparency::PreDrawHack()
 
 		auto dest = desc.RenderTarget[0].DestBlend;
 		auto src = desc.RenderTarget[0].SrcBlend;
+		auto op = desc.RenderTarget[0].BlendOp;
 		
-		logger::warn("unknown alpha blend mode {}, DestBlend {} , SrcBlend {}", alphaBlendMode, magic_enum::enum_name(dest), magic_enum::enum_name(src));
+		logger::warn("unknown alpha blend mode {}, DestBlend {} , SrcBlend {}, Op {}", alphaBlendMode, magic_enum::enum_name(dest), magic_enum::enum_name(src), magic_enum::enum_name(op));
 	}
 
+	// Blend mode descriptors
 	if (alphaBlendMode == AlphaBlendMode::kAdditive)
-	{
-		// Additive blend have effective 
 		descriptor |= OITAddtiveDescriptor;
-	}
 	else if (alphaBlendMode == AlphaBlendMode::kMultiplicative)
-	{
 		descriptor |= OITMultiplicativeDescriptor;
-	}
-	if (depthStencilDepthMode == RE::BSGraphics::DepthStencilDepthMode::kWrite || depthStencilDepthMode == RE::BSGraphics::DepthStencilDepthMode::kTestWrite) {
-		// If depth write is enabled, we need to disable it for OIT
+	else if (alphaBlendMode == AlphaBlendMode::kMultiplicativeAlpha)
+		descriptor |= OITMultiplicativeDescriptor;
+
+	// Setup depth write descriptor, depth write will be skipped in capture pass
+	using enum RE::BSGraphics::DepthStencilDepthMode;
+	if (depthStencilDepthMode == kWrite || depthStencilDepthMode == kTestWrite || drawWriteDepth)
+	{
 		descriptor |= OITDepthWriteDescriptor;
+		// logger::info("Write depth @ descriptor {}.", descriptor);
 	}
 
 	if (settings.OverrideRenderTargets || !REL::Module::IsAE())
 	{
+		// Force render target and UAVs
 		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), nullptr);
 		lastVS = *globals::game::currentPixelShader;
 	}
@@ -528,8 +584,20 @@ void OrderIndependentTransparency::SetupGeometry(RE::BSShader*, RE::BSRenderPass
 {
 	if (!inAlphaPass)
 		return;
+
+	if (pass->shaderProperty && pass->shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kZBufferWrite)) 
+	{
+		// TODO:
+		// Re-consolidate Z-Buffer Write geometries to a single draw call
+		// Skyrim is breaking Z-Buffer Write alpha geometries into multiple sub mesh and draw calls
+		// We nolonger need this workaround with proper OIT
+		// logger::info("Geometry requests depth write @ {}.", pass->geometry->name);
+		drawWriteDepth = true;
+	}
 	if (closeEnough)
+	{
 		return;
+	}
 
 	const RE::NiBound& geometryBound = pass->geometry->worldBound;
 	auto position = geometryBound.center;
@@ -548,6 +616,11 @@ void OrderIndependentTransparency::SetupGeometry(RE::BSShader*, RE::BSRenderPass
 	}
 }
 
+void OrderIndependentTransparency::RestoreGeometry(RE::BSShader* , RE::BSRenderPass* , uint32_t )
+{
+	drawWriteDepth = false;
+}
+
 void OrderIndependentTransparency::BeginAlphaGroup()
 {
 	EndWater();
@@ -558,12 +631,13 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	inAlphaPass = true;
 	calls = 0;
 	lastVS = nullptr;
-	closeEnough = false;
+	closeEnough = true; // Current disabled because the hook to set closeEnough to true (SetupGeometry) is after the OIT shader flag set (TechniqueBegin)
 
 	logger::debug("Beginning OIT alpha group camera pos = {}, camera world position = {}", cameraPos, cameraWorld.translate);
 
 	static constexpr bool resetUAVCounter = true;
 
+	auto* renderer = globals::game::renderer;
 	ID3D11DeviceContext* context = globals::d3d::context;
 	ID3D11UnorderedAccessView* fragmentListHeadUAV = fragmentListHead->uav.get();
 	// context->OMGetRenderTargets(0, NULL, sceneDSV.put());
@@ -576,10 +650,18 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 		0x0UL
 	};
 
+	if (settings.WriteDepth && settings.UsePixelShader)
+	{
+		// We need main depth (depth after water) in composition
+		// Copying it so that we can read from MainCopy and write write to Main (depth cannot be UAV)
+		auto& main = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		auto& mainCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_WATER_COPY];
+		context->CopyResource(mainCopy.texture, main.texture);
+	}
+
 	context->ClearUnorderedAccessViewUint(fragmentListHeadUAV, clearValuesHead);
 	// FillFragmentListConstants(pD3DImmediateContext, mLisTexNodeCount * 2);
 
-	auto* renderer = globals::game::renderer;
 	uavs = { fragmentListHead->uav.get(), fragmentListNode->uav.get() };
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& TAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
@@ -667,13 +749,17 @@ void OrderIndependentTransparency::EndAlphaGroup()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& alpha = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_ONLY_ALPHA];
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto& mainDepthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_WATER_COPY];
 
+	using globals::features::terrainBlending;
+	ID3D11ShaderResourceView* waterDepthSrv = mainDepth.depthSRV;
+	// If we need to write depth in composition pass, we need to use the copied depth
+	if (settings.WriteDepth && settings.UsePixelShader) waterDepthSrv =  mainDepthCopy.depthSRV;
 	// Water depth is rendered at kMain after water pass
 	// But mainDepth.depthSRV was REDIRECTED by terrain blending to its own copy (for UAV access)
 	// At this point, we need to access the actual main depth as SRV
-	using globals::features::terrainBlending;
-	ID3D11ShaderResourceView* waterDepthSrv = terrainBlending.loaded ? terrainBlending.depthSRVBackup : nullptr;
-	waterDepthSrv = waterDepthSrv ? waterDepthSrv : mainDepth.depthSRV;
+	else if (terrainBlending.loaded) waterDepthSrv = terrainBlending.depthSRVBackup;
+
 	ID3D11ShaderResourceView* srvs[] = { fragmentListHead->srv.get(), fragmentListNode->srv.get(), waterDepthSrv };
 
 	if (settings.UsePixelShader)
@@ -719,10 +805,13 @@ void OrderIndependentTransparency::EndAlphaGroup()
 
 		// Set up pixel shader resources
 		ID3D11RenderTargetView* _rtvs[2] = { main.RTV, alpha.RTV };
-		auto& preWaterDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		ID3D11DepthStencilView* _dsv = nullptr;
+		if (settings.WriteDepth && settings.UsePixelShader) {
+			_dsv = mainDepth.views[0];
+		}
 
 		ScopedShaderResource srvGuard ( shader, srvs, 0 );
-		ScopedShaderResource rtvGuard ( shader, _rtvs, preWaterDepth.views[0] );
+		ScopedShaderResource rtvGuard(shader, _rtvs, _dsv);
 
 		context->PSSetShader(shader, nullptr, 0);
 

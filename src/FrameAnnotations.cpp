@@ -58,6 +58,8 @@ namespace FrameAnnotations
 		{
 			func(shader, pass, renderFlags);
 
+			globals::features::orderIndependentTransparency.RestoreGeometry(shader, pass, renderFlags);
+
 			if (globals::state->frameAnnotations) {
 				globals::state->EndPerfEvent();
 			}

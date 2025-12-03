@@ -312,7 +312,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
-	globals::features::orderIndependentTransparency.PreSetStateDirty(isCompute);
+	globals::features::orderIndependentTransparency.PreSetStateDirty();
 	func(isCompute);
 	globals::state->Draw();
 }

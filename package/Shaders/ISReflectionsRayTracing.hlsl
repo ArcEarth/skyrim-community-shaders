@@ -19,7 +19,7 @@ SamplerState AlphaSampler : register(s3);
 
 Texture2D<float4> NormalTex : register(t0);
 Texture2D<float4> ColorTex : register(t1);
-Texture2D<float4> DepthTex : register(t2);
+Texture2D<unorm float> DepthTex : register(t2);
 Texture2D<float4> AlphaTex : register(t3);
 
 cbuffer PerGeometry : register(b2)
@@ -123,7 +123,7 @@ float4 GetReflectionColor(
 				positionWS.w = 1.0;
 
 				// Compute camera motion vector
-				float2 cameraMotionVector = MotionBlur::GetSSMotionVector(positionWS, positionWS, finalEyeIndex);
+				float2 cameraMotionVector = MotionBlur::GetSSMotionVector2(positionWS, finalEyeIndex);
 
 				// Reproject alpha from previous frame
 				float2 reprojectedRaySample = finalSampleUV + cameraMotionVector;
@@ -131,9 +131,9 @@ float4 GetReflectionColor(
 
 				// Check that the reprojected data is within the frame
 				if (!FrameBuffer::IsOutsideFrame(reprojectedRaySample.xy))
-					alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
+					alpha = AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0);
 
-				float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
+				float3 reflectionColor = color * (1 - alpha.w * SSRParams.z) + SSRParams.z * alpha.xyz * alpha.w;
 				return float4(reflectionColor, fadeFactor);
 			}
 
@@ -149,7 +149,7 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 	psout.Color = 0;
 
-#	ifndef ENABLESSR
+#ifndef ENABLESSR
 	// Disable SSR raymarch
 	return psout;
 #	endif
@@ -167,7 +167,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 viewNormal = DefaultNormal;
 
-	float depth = DepthTex.SampleLevel(DepthSampler, screenPosition, 0).x;
+	float depth = DepthTex.SampleLevel(DepthSampler, screenPosition, 0);
 
 	float4 positionVS = float4(float2(uv.x, 1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
 	positionVS = mul(FrameBuffer::CameraProjInverse[eyeIndex], positionVS);

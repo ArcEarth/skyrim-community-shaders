@@ -950,6 +950,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #	endif
 
 #	if defined(OIT)
+#		define OIT_WRITE_DEPTH 1
 #		include "OIT/FragmentList.hlsli"
 #	endif
 
