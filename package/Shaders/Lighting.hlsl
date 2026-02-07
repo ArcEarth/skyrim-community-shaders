@@ -951,7 +951,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	if defined(OIT)
 #		define OIT_WRITE_DEPTH 1
-#		include "OIT/FragmentList.hlsli"
+#		include "OIT/OITCapture.hlsli"
 #	endif
 
 #	include "Common/LightingEval.hlsli"

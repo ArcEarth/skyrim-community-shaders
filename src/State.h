@@ -206,6 +206,7 @@ public:
 		OITAdditive            = 1 << 10,
 		OITMultiplicative      = 1 << 11,
 		OITDepthWrite          = 1 << 12,
+		OITDisabled            = 1 << 13,
 	};
 
 	bool inWorld = false;

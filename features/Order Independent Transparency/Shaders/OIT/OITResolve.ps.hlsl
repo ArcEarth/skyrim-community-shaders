@@ -1,8 +1,15 @@
 #if !defined(OIT_WRITE_DEPTH)
 #define OIT_WRITE_DEPTH 0
 #endif
-#include "OIT/DXAOITResolve.hlsli"
+
 #include "Upscaling/UpscaleVS.hlsl"
+
+#if defined(OIT_ROV)
+#include "OIT/AOITResolve.hlsli"
+#else
+#include "OIT/DXAOITResolve.hlsli"
+#endif
+
 #define PS_INPUT VS_OUTPUT
 
 struct PS_OUT
@@ -35,7 +42,8 @@ PS_OUT main(PS_INPUT input)
 
 	color.w = 1.0 - color.w;
 	wcolor.w = 1.0 - wcolor.w;
-	if (wcolor.w > 0.f) wcolor.xyz /= wcolor.w;
+	if (wcolor.w > 0.f)
+		wcolor.xyz /= wcolor.w;
 	psout.Color = color;
 	psout.Alpha = wcolor;
 	return psout;

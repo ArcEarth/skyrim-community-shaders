@@ -5,7 +5,7 @@
 
 #if defined(OIT)
 #define OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD 1
-#include "OIT/FragmentList.hlsli"
+#include "OIT/OITCapture.hlsli"
 #endif
 
 struct VS_INPUT

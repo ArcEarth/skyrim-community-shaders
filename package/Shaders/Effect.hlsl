@@ -529,7 +529,7 @@ cbuffer PerGeometry : register(b2)
 #	include "Common/ShadowSampling.hlsli"
 
 #	if defined(OIT)
-#		include "OIT/FragmentList.hlsli"
+#		include "OIT/OITCapture.hlsli"
 #	endif
 
 float ComputeShadowVariance(float shadow)

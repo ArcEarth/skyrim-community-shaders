@@ -6,14 +6,15 @@
         "patch": 0
     },
     "configurePresets": [
-        {
-            "name": "common",
-            "hidden": true,
-            "cacheVariables": {
-                "SKSE_SUPPORT_XBYAK": "ON"
-            },
-            "binaryDir": "${sourceDir}/build/${presetName}"
+      {
+        "name": "common",
+        "hidden": true,
+        "cacheVariables": {
+          "SKSE_SUPPORT_XBYAK": "ON"
         },
+        "installDir": "C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition/ModOrganizer/mods/Community Shader Dev",
+        "binaryDir": "${sourceDir}/build/${presetName}"
+      },
         {
             "name": "vcpkg",
             "hidden": true,
