@@ -983,7 +983,9 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 #if defined(OIT)
 	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+#if !defined(MOTIONVECTORS_NORMALS)
 	psout.Color2 = psout.Diffuse;
+#endif
 #endif
 	return psout;
 }
