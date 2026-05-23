@@ -179,7 +179,7 @@ void InteriorSun::PopulateReplacementJobArrays(RE::TESObjectCELL* cell, const RE
 	}
 
 	const auto playerPos = RE::PlayerCharacter::GetSingleton()->GetPosition();
-	auto lightDir = -dirLight->GetShadowDirectionalLightRuntimeData().sunVector;
+	auto lightDir = -dirLight->GetShadowDirectionalLightRuntimeData().lightDirection;
 	lightDir.Unitize();
 
 	// Add extra rooms and portals that are in the direction of the sun
@@ -199,8 +199,8 @@ void InteriorSun::InitialiseOnNewCell(const RE::NiPointer<RE::BSPortalGraph>& po
 	currentCellRoomsAndPortals.clear();
 
 	if (const auto portalSharedNode = portalGraph->portalSharedNode) {
-		for (const auto room : portalGraph->rooms)
-			currentCellRoomsAndPortals.push_back(room);
+		for (const auto& object : portalGraph->unk58)
+			currentCellRoomsAndPortals.push_back(object);
 
 		for (auto child : portalGraph->portalSharedNode->GetChildren())
 			currentCellRoomsAndPortals.push_back(child);

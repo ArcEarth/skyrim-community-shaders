@@ -355,15 +355,16 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 	using enum RE::BSShaderProperty::EShaderPropertyFlag;
 	using enum RE::BSUtilityShader::Flags;
 
-	auto* precipitationOcclusionMapRenderPassList = &property->occlusionPasses;
+	auto* precipitationOcclusionMapRenderPassArray = &property->renderPassList;
+	auto* precipitationOcclusionMapRenderPassList = reinterpret_cast<RE::BSLightingShaderProperty::Data*>(precipitationOcclusionMapRenderPassArray);
 
 	precipitationOcclusionMapRenderPassList->Clear();
 	if (skylighting.inOcclusion) {
 		if (property->flags.any(kSkinned) && property->flags.none(kTreeAnim))
-			return precipitationOcclusionMapRenderPassList;
+			return precipitationOcclusionMapRenderPassArray;
 	} else {
 		if (property->flags.any(kSkinned))
-			return precipitationOcclusionMapRenderPassList;
+			return precipitationOcclusionMapRenderPassArray;
 	}
 
 	if (skylighting.inOcclusion) {
@@ -390,7 +391,7 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 									static_cast<int32_t>(RE::BSXFlags::Flag::kLights) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kBreakable) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kSearchedBreakable))) {
-						return precipitationOcclusionMapRenderPassList;
+						return precipitationOcclusionMapRenderPassArray;
 					}
 				}
 			}
@@ -414,7 +415,7 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 				technique.set(Vc);
 			}
 
-			const auto alphaProperty = static_cast<RE::NiAlphaProperty*>(geometry->GetGeometryRuntimeData().alphaProperty.get());
+			const auto alphaProperty = static_cast<RE::NiAlphaProperty*>(geometry->GetGeometryRuntimeData().properties[0].get());
 			if (alphaProperty && alphaProperty->GetAlphaTesting()) {
 				technique.set(Texture);
 				technique.set(AlphaTest);
@@ -435,7 +436,7 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 				technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
 		}
 	}
-	return precipitationOcclusionMapRenderPassList;
+	return precipitationOcclusionMapRenderPassArray;
 }
 
 void Skylighting::SetViewFrustum::thunk(RE::NiCamera* a_camera, RE::NiFrustum* a_frustum)
@@ -508,7 +509,7 @@ void Skylighting::RenderOcclusion()
 				}
 				if (precipObject) {
 					precip->SetupMask();
-					auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
+					auto& effect = precipObject->GetGeometryRuntimeData().properties[1];
 					auto shaderProp = effect.get();
 					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);

@@ -223,7 +223,7 @@ namespace
 	}
 
 	// Picks the capture source by where ISHDR wrote the scene this frame:
-	//   VR              -> RE::RENDER_TARGETS::kVR_FRAMEBUFFER (SBS).
+	//   VR              -> RE::RENDER_TARGETS::kFRAMEBUFFER (SBS).
 	//   HDR enabled     -> HDR::HdrTexture (FP16 linear; PrepareBmpImage tonemaps).
 	//   otherwise       -> kFRAMEBUFFER (already tonemapped UNORM).
 	//
@@ -239,7 +239,7 @@ namespace
 		}
 
 		if (globals::game::isVR) {
-			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
+			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 			src.texture = ResolveSlotTexture(slot, holder);
 			src.srv = slot.SRV;
 			src.description = "VR SBS framebuffer";
@@ -576,11 +576,11 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 
 void ScreenshotFeature::ShowInGameNotification(std::string message)
 {
-	// ShowHUDMessage must run on the game's main thread; marshall via SKSE's
+	// DebugNotification must run on the game's main thread; marshall via SKSE's
 	// task interface. Third arg dedupes spam-clicks - one toast at a time.
 	if (auto* taskInterface = SKSE::GetTaskInterface()) {
 		taskInterface->AddTask([msg = std::move(message)]() {
-			RE::SendHUDMessage::ShowHUDMessage(msg.c_str(), nullptr, true);
+			RE::DebugNotification(msg.c_str(), nullptr, true);
 		});
 	}
 }
