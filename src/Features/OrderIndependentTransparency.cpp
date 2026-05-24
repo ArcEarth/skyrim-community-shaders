@@ -650,12 +650,8 @@ void OrderIndependentTransparency::PreDrawHack()
 		return;
 	}
 
-	// Disable OIT when for very distant objects, e.g. 100 layers of volumetric fog on the horizon
-	if (!closeEnough)
-	{
-		logger::debug("[OIT] Disabling OIT for distant object @.");
-		descriptor |= OITDisabledDescriptor;
-	}
+	// Distance gating is evaluated in SetupGeometry(), which runs after this hook.
+	// Disabling OIT here makes translucent objects bypass capture and show up as overlays in water refraction.
 
 	auto shadowState = globals::game::shadowState;
 	GET_INSTANCE_MEMBER(alphaBlendMode, shadowState);
@@ -693,7 +689,8 @@ void OrderIndependentTransparency::PreDrawHack()
 	if (settings.OverrideRenderTargets || !REL::Module::IsAE())
 	{
 		// Force render target and UAVs
-		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2 + settings.Method == OIT_RVO, uavs.data(), nullptr);
+		const UINT uavCount = 2 + (settings.Method == OIT_RVO ? 1 : 0);
+		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, uavCount, uavs.data(), nullptr);
 		lastVS = *globals::game::currentPixelShader;
 	}
 }
@@ -749,7 +746,9 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	inAlphaPass = true;
 	calls = 0;
 	lastVS = nullptr;
-	closeEnough = false;
+	// Keep capture enabled for the whole alpha pass until distance-threshold evaluation
+	// is moved earlier than PreDrawHack()/shader permutation setup.
+	closeEnough = true;
 
 	logger::debug("Beginning OIT alpha group camera pos = {}, camera world position = {}", cameraPos, cameraWorld.translate);
 
