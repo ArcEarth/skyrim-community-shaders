@@ -9,6 +9,7 @@
 #include "State.h"
 
 #include "Features/DynamicCubemaps.h"
+#include "Features/OrderIndependentTransparency.h"
 
 #include "Plugin.h"
 
@@ -130,6 +131,12 @@ namespace SIE
 			return 0x3F & (descriptor >> 24);
 		}
 
+		static void AddDefines(std::span<D3D_SHADER_MACRO> defines, size_t& lastIndex, std::span<const D3D_SHADER_MACRO> more)
+		{
+			std::ranges::copy(more, defines.begin() + lastIndex);
+			lastIndex += more.size();
+		}
+
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
 			static REL::Relocation<void(uint32_t, D3D_SHADER_MACRO*)> VanillaGetLightingShaderDefines(RELOCATION_ID(101631, 108698));
@@ -147,7 +154,7 @@ namespace SIE
 				}
 			}
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::OIT)) {
-				defines[lastIndex++] = { "OIT", nullptr };
+				AddDefines(defines, lastIndex, globals::features::orderIndependentTransparency.GetShaderDefines());
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
@@ -336,7 +343,7 @@ namespace SIE
 				}
 			}
 			if (descriptor & static_cast<uint32_t>(ShaderCache::ParticleShaderFlags::OIT)) {
-				defines[lastIndex++] = { "OIT", nullptr };
+				AddDefines(defines, lastIndex, globals::features::orderIndependentTransparency.GetShaderDefines());
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
@@ -436,7 +443,7 @@ namespace SIE
 			}
 
 			if (descriptor & static_cast<uint32_t>(ShaderCache::EffectShaderFlags::OIT)) {
-				defines[lastIndex++] = { "OIT", nullptr };
+				AddDefines(defines, lastIndex, globals::features::orderIndependentTransparency.GetShaderDefines());
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {

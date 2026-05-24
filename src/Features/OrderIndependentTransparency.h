@@ -8,6 +8,10 @@ struct OrderIndependentTransparency : Feature
 	virtual inline std::string_view GetShaderDefineName() override { return "OIT"; }
 	virtual std::string_view GetCategory() const override { return "Materials"; }
 
+	// Get the shader define for material shader compilation, needs to invalidate shader cache when setting changes
+	std::span<const D3D_SHADER_MACRO> GetShaderDefines() const;
+	bool UpdateShaderDefines();
+
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
@@ -24,16 +28,16 @@ struct OrderIndependentTransparency : Feature
 	// We will take way too much flags for that
 	enum Method : int
 	{
-		Disabled,
-		DebugVisualization,
-		AdaptiveTransparency,
-		WeightedBlendedOIT,
-		MultiLayerAlphaBlend,	// To be implemented
+		OIT_DISABLED, // Disable OIT
+		OIT_VISUALIZE,// Visualize the number of layers
+		OIT_AT,       // AT, Adpative transparency, A buffer with per-pixel linked list
+		OIT_BLENDED,  // Weighted blended OIT
+		OIT_RVO,      // MLAB, K-Buffer with rasterizer order view
 	};
 
 	struct Settings
 	{
-		Method	Method = AdaptiveTransparency;  // Method to use for OIT
+		Method	Method = OIT_AT;  // Method to use for OIT
 		uint	BufferSize = 8; // Multiplier of the back buffer size for holding Fragment List Node
 		uint	MaxLayers = 8;  // Maximum layers in OIT resolution, layers exceeding this limit may introduce rendering artifacts
 		float	AlphaThreshold = 0.f; // Alpha cutoff below which pixels are discarded
@@ -58,6 +62,9 @@ struct OrderIndependentTransparency : Feature
 
 	Settings settings;
 
+	D3D_SHADER_MACRO shaderDefines[2] = { { nullptr, nullptr }, { nullptr, nullptr } };
+	char shaderDefineBuffer[4]; // For holding string of MaxLayers
+
 	float passTime; // API Time spend in the transparency (material) pass
 	float compositeTime; // API Time spend in the composite pass
 
@@ -73,8 +80,9 @@ struct OrderIndependentTransparency : Feature
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 
+	uint GetNodeCount() const;
 	void CompileShaders();
-	void AllocateFragmentListNodes(uint numElem);
+	void SetupPixelBuffers(uint numElem);
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 
@@ -89,7 +97,7 @@ struct OrderIndependentTransparency : Feature
 	void EndAlphaGroup();
 	void BeginWater();
 	void EndWater();
-	[[nodiscard]] bool ShouldCapture() const { return inAlphaPass && closeEnough; }
+	[[nodiscard]] bool ShouldCapture() const { return inAlphaPass /*&& closeEnough*/; }
 
 	struct FragmentListNode
 	{
@@ -99,24 +107,32 @@ struct OrderIndependentTransparency : Feature
 	};
 
 	// GPU Resources
-	std::optional<Texture2D>				fragmentListHead;
-	std::optional<Buffer>					fragmentListNode;
 
-	winrt::com_ptr<ID3D11ComputeShader>		debugCS;   // For visualizing the fragment count
-	winrt::com_ptr<ID3D11ComputeShader>		resolveCS; // For adaptive transparency
-	winrt::com_ptr<ID3D11ComputeShader>		blendCS;   // For weighted blended OIT
+	// OIT_AT
+	std::optional<Texture2D>					headerBuffer; // RUINT32, Fragement list header buffer or clear mask
+	std::optional<Buffer>						nodesBuffer;  // Fragement list nodes buffer
+	// OIT_RVO
+	std::optional<Buffer>						colorBuffer; // RWStructuredBuffer<uint4[OIT_NODE_COUNTS]>
+	std::optional<Buffer>						depthBuffer; // RWStructuredBuffer<float4[OIT_NODE_COUNTS]>
 
-	winrt::com_ptr<ID3D11PixelShader>			resolvePS;   // For adaptive transparency
-	winrt::com_ptr<ID3D11PixelShader>			debugPS;   // For adaptive transparency
-	winrt::com_ptr<ID3D11PixelShader>			blendPS;   // For adaptive transparency
+	winrt::com_ptr<ID3D11ComputeShader>			csVisualize;   // For visualizing the fragment count
+	winrt::com_ptr<ID3D11ComputeShader>			csAT; // For adaptive transparency
+	winrt::com_ptr<ID3D11ComputeShader>			csBlend;   // For weighted blended OIT
+
+	winrt::com_ptr<ID3D11PixelShader>			psVisualize;   // For adaptive transparency
+	winrt::com_ptr<ID3D11PixelShader>			psAT; // For adaptive transparency
+	winrt::com_ptr<ID3D11PixelShader>			psBlend;   // For adaptive transparency
+	winrt::com_ptr<ID3D11PixelShader>			psROV;   // For adaptive transparency
+
 	winrt::com_ptr<ID3D11DepthStencilState>		depthStencilState; // depth testing but not writing
 	winrt::com_ptr<ID3D11BlendState>			resolveBlendState; // depth testing but not writing
 	winrt::com_ptr<ID3D11DepthStencilState>		resolveDepthStencilState;  // depth testing but not writing
 
 	// Temporarily for setting render target in alpha pass, not reference counted
 	std::array<ID3D11RenderTargetView*,3>		rtvs; 
-	std::array<ID3D11UnorderedAccessView*, 2>	uavs;
+	std::array<ID3D11UnorderedAccessView*, 3>	uavs;
 	ID3D11DepthStencilView*						dsv;
+
 	int											calls = 0;
 	void*										lastVS = nullptr;
 	RE::NiPoint3								cameraPos;

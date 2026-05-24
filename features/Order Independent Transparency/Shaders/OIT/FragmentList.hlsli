@@ -17,25 +17,7 @@
 #ifndef H_FRAGMENT_LIST
 #define H_FRAGMENT_LIST
 
-#if !defined(OIT_WRITE_DEPTH)
-#define OIT_WRITE_DEPTH 0
-#endif
-// #include "../../../../package/Shaders/Common/FrameBuffer.hlsli"
-#include "Common/SharedData.hlsli"
-#include "Common/Permutation.hlsli"
-
-#define OIT_FEATURE_FLAGS_SHIFT    10
-#define OIT_FLAGS_ADDITIVE         0x1UL
-#define OIT_FLAGS_MULTIPLICATIVE   0x2UL
-#define OIT_FLAGS_MULTIPLICATIVE_A 0x3UL
-#define OIT_FLAGS_BLEND_MODS       0x3UL
-
-#define OIT_FLAGS_DEPTH_WRITE      0x4UL
-#define OIT_FLAGS_BITS             0x7UL
-
-#if !defined(OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD)
-#define OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD 0
-#endif
+#include "OIT/OITCommon.hlsli"
 
 //////////////////////////////////////////////
 // Structs
@@ -55,8 +37,8 @@ struct FragmentListNode
 RWTexture2D<uint> gFragmentListFirstNodeAddressUAV : register(u3);
 RWStructuredBuffer<FragmentListNode> gFragmentListNodesUAV : register(u4);
 
-Texture2D<uint> gFragmentListFirstNodeAddressSRV : register(t0);
-StructuredBuffer<FragmentListNode> gFragmentListNodesSRV : register(t1);
+Texture2D<uint> gFragmentListFirstNodeAddressSRV : register(t1);
+StructuredBuffer<FragmentListNode> gFragmentListNodesSRV : register(t2);
 
 //////////////////////////////////////////////
 // Helper Functions
@@ -121,10 +103,10 @@ bool FL_AllocNode(out uint newNodeAddress1D)
 	// alloc a new node
 	newNodeAddress1D = gFragmentListNodesUAV.IncrementCounter();
 
-	//uint maxNodes, stride;	
-	//gFragmentListNodesUAV.GetDimensions(maxNodes, stride);
+	uint maxNodes, stride;
+	gFragmentListNodesUAV.GetDimensions(maxNodes, stride);
 
-	return newNodeAddress1D <= SharedData::orderIndependentTransparencySettings.MaxListNodes;
+	return newNodeAddress1D <= maxNodes; //SharedData::orderIndependentTransparencySettings.MaxListNodes;
 }
 
 // Insert a new node at the head of the list
@@ -137,52 +119,12 @@ void FL_InsertNode(in int2 screenAddress, in uint newNodeAddress, in FragmentLis
 	gFragmentListNodesUAV[newNodeAddress] = newNode;
 }
 
-float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
+bool OIT_CaptureImpl(in int2 screenAddress, in float4 color, in float depth, uint flags)
 {
-	// discard pixels that are too far
-	if (depth > SharedData::orderIndependentTransparencySettings.DepthThreshold)
-		return color;
-
-	uint flags = ((Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT) & OIT_FLAGS_BITS);
-	uint blend = flags & OIT_FLAGS_BLEND_MODS;
-	// uniform branching to skip OIT for multiplicative blend when not supported
-	if ((blend & OIT_FLAGS_MULTIPLICATIVE) && (SharedData::orderIndependentTransparencySettings.Flags == 0))
-		return color;
-
-	float4 zero = (blend & OIT_FLAGS_MULTIPLICATIVE) ? float4(1, 1, 1, 1) : float4(0, 0, 0, 0);
-	
-	float4 incolor = color;
-
-#if !OIT_CAPTURE_IGNORE_ALPHA_THRESHOULD
-	color.w = max(0.f, color.w - SharedData::orderIndependentTransparencySettings.AlphaThreshold) / (1.f - SharedData::orderIndependentTransparencySettings.AlphaThreshold);
-#endif
-
-	if (blend == OIT_FLAGS_MULTIPLICATIVE_A)
-		color = float4(0, 0, 0, (1 - color.w) * color.a);
-	else if (blend == OIT_FLAGS_ADDITIVE) // additive blend
-		color = float4(color.xyz * color.w, 0.f);
-	else if (blend == OIT_FLAGS_MULTIPLICATIVE) // multiplicative blend, fully supported needs per channel alpha
-		color = float4(0, 0, 0, 1 - color.a);
-	else // regular alpha blend
-		color = float4(color.xyz * color.w, color.w);
-
-#if 0
-#if OIT_WRITE_DEPTH
-	if (flags & OIT_FLAGS_DEPTH_WRITE)
-		color = float4(1, 0, 0, 1);
-#endif
-	if (blend == OIT_FLAGS_MULTIPLICATIVE_A)
-		color = float4(0, 1, 0, 1);
-	else if (blend == OIT_FLAGS_ADDITIVE) // additive blend
-		color = float4(0, 0, 1, 1);
-	else if (blend == OIT_FLAGS_MULTIPLICATIVE) // multiplicative blend, fully supported needs per channel alpha
-		color = float4(0, 1, 1, 1);
-#endif	
-	
 	uint packed = FL_PackColor(color);
 	// discard fully transparent pixels
 	if (packed == 0x00000000UL)
-		return zero;
+		return true;
 
 	uint newNodeAddress;
 	if (FL_AllocNode(newNodeAddress))
@@ -191,9 +133,9 @@ float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
 		node.color = packed;
 		node.depth = FL_PackDepthAndFlags(depth, flags);
 		FL_InsertNode(screenAddress, newNodeAddress, node);
-		return zero;
+		return true;
 	}
-	return incolor; // return original color if we failed to allocate a new node
+	return false; // return original color if we failed to allocate a new node
 }
 
 FragmentListNode FL_GetNode(uint nodeAddress)
