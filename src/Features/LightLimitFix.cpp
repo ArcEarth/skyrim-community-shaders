@@ -252,8 +252,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 		if (i < a_pass->numShadowLights) {
 			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-			const auto shadowLightIndex = shadowLight->GetRuntimeData().shadowLightIndex;
-			light.shadowMaskIndex = shadowLightIndex;
+			GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+			light.shadowMaskIndex = maskIndex;
 			light.lightFlags.set(LightFlags::Shadow);
 		}
 
@@ -266,7 +266,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		if (!bsLight)
 			continue;
 		auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-		strictLightDataTemp.ShadowBitMask |= (1u << shadowLight->GetRuntimeData().shadowLightIndex);
+		GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+		strictLightDataTemp.ShadowBitMask |= (1u << maskIndex);
 	}
 }
 
@@ -400,7 +401,7 @@ void LightLimitFix::UpdateLights()
 
 	roomNodes.clear();
 
-	auto addRoom = [&](const void* node, LightData& light) {
+	auto addRoom = [&](RE::NiNode* node, LightData& light) {
 		uint8_t roomIndex = 0;
 		if (auto it = roomNodes.find(node); it == roomNodes.cend()) {
 			roomIndex = static_cast<uint8_t>(roomNodes.size());
@@ -445,13 +446,14 @@ void LightLimitFix::UpdateLights()
 
 					if (bsLight->IsShadowLight()) {
 						auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-						light.shadowMaskIndex = shadowLight->GetRuntimeData().shadowLightIndex;
+						GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+						light.shadowMaskIndex = maskIndex;
 						light.lightFlags.set(LightFlags::Shadow);
 					}
 
 					// Check for inactive shadow light
 					if (light.shadowMaskIndex != 255) {
-						SetLightPosition(light, niLight->world.translate, false);
+						SetLightPosition(light, niLight->world.translate);
 
 						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 							lightsData.push_back(light);

@@ -576,7 +576,7 @@ void Deferred::CopyShadowLightData()
 	if (!shadowSceneNode)
 		return;
 
-	auto* sunShadowLight = shadowSceneNode->GetRuntimeData().shadowDirLight;
+	auto* sunShadowLight = shadowSceneNode->GetRuntimeData().sunShadowDirLight;
 	if (!sunShadowLight)
 		return;
 

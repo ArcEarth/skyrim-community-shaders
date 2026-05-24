@@ -65,10 +65,8 @@ static void ClearWaterNodeChildren(RE::NiNode* node, RE::TESWaterSystem* waterSy
 		if (const auto childNode = child ? child->AsNode() : nullptr)
 			ClearWaterNodeChildren(childNode, waterSystem);
 
-		if (child && waterSystem) {
-			if (auto* geometry = child->AsGeometry())
-				waterSystem->RemoveGeometry(geometry);
-		}
+		if (child && waterSystem)
+			waterSystem->RemoveWater(child.get());
 
 		node->DetachChildAt(--count);
 	}
@@ -201,7 +199,7 @@ static void RemoveDuplicateWaterSystemObjects(RE::TESWaterSystem* waterSystem, R
 			continue;
 
 		shape->SetAppCulled(true);
-		waterSystem->RemoveGeometry(shape);
+		waterSystem->RemoveWater(shape);
 	}
 }
 
@@ -253,11 +251,9 @@ bool UnifiedWater::BuildWaterForBlock(RE::BGSTerrainBlock* block, RE::TESWaterSy
 		}
 
 		const auto lodLevel = node->GetLODLevel();
-		const auto nodeX = static_cast<int32_t>(node->x);
-		const auto nodeY = static_cast<int32_t>(node->y);
-		const auto instructions = waterCache->GetInstructions(worldSpace, lodLevel, nodeX, nodeY);
+		const auto instructions = waterCache->GetInstructions(worldSpace, lodLevel, node->baseCellX, node->baseCellY);
 		if (!instructions) {
-			logger::warn("[Unified Water] No instructions found for {} chunk at {}, {}", worldSpace->GetFormEditorID(), nodeX, nodeY);
+			logger::warn("[Unified Water] No instructions found for {} chunk at {}, {}", worldSpace->GetFormEditorID(), node->baseCellX, node->baseCellY);
 			BGSTerrainBlock_Attach::func(block);
 			return false;
 		}
@@ -271,8 +267,8 @@ bool UnifiedWater::BuildWaterForBlock(RE::BGSTerrainBlock* block, RE::TESWaterSy
 			const auto targetShape = lodLevel > 4 || settings.UseOptimisedMeshes ? optimisedWaterMesh : waterMesh;
 			RE::BSTriShape* shape = targetShape->CreateClone(cloningProcess)->AsTriShape();
 
-			const auto posX = (instruction.x - nodeX) * 4096.0f + instruction.size * 2048.0f;
-			const auto posY = (instruction.y - nodeY) * 4096.0f + instruction.size * 2048.0f;
+			const auto posX = (instruction.x - node->baseCellX) * 4096.0f + instruction.size * 2048.0f;
+			const auto posY = (instruction.y - node->baseCellY) * 4096.0f + instruction.size * 2048.0f;
 			shape->local.scale = static_cast<float>(instruction.size);
 			shape->local.translate = { posX, posY, instruction.waterHeight };
 
@@ -291,7 +287,7 @@ bool UnifiedWater::BuildWaterForBlock(RE::BGSTerrainBlock* block, RE::TESWaterSy
 	for (auto& [shape, instruction] : built) {
 		AddLODWater(waterSystem, shape, worldSpace, *gWaterLOD, block->water);
 
-		if (const auto prop = shape->GetGeometryRuntimeData().properties[1].get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
+		if (const auto prop = shape->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
 			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
 			REX::EnumSet waterFlags = static_cast<RE::BSWaterShaderProperty::WaterFlag>(0b10000100);
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseCubemapReflections;
@@ -667,7 +663,7 @@ void UnifiedWater::BSWaterShader_SetupGeometry::thunk(RE::BSShader* waterShader,
 		// Re-stabilize BSWaterShaderProperty.plane every draw. After interior/exterior
 		// transitions the cached plane can be stale for exactly one of two overlapping
 		// water surfaces, which presents as heavy flicker rather than missing water.
-		if (const auto prop = pass->geometry->GetGeometryRuntimeData().properties[1].get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
+		if (const auto prop = pass->geometry->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
 			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
 			const float waterHeight = pass->geometry->world.translate.z;
 
@@ -683,7 +679,7 @@ void UnifiedWater::BSWaterShader_SetupGeometry::thunk(RE::BSShader* waterShader,
 		uw.gDisplacementMeshFlowCellOffset->x = static_cast<float>(uw.flowmap->GetHeight());  // ObjectUV.y
 		uw.gDisplacementMeshFlowCellOffset->y = 1.0f - pass->geometry->local.scale;           // ObjectUV.z (counters 1 - x in SetupGeometry)
 
-		if (const auto prop = pass->geometry->GetGeometryRuntimeData().properties[1].get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
+		if (const auto prop = pass->geometry->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
 			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
 			int32_t x, y;
 			Util::WorldToCell(pass->geometry->world.translate, x, y);

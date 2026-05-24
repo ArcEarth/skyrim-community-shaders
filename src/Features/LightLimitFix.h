@@ -183,7 +183,7 @@ public:
 
 	void BSLightingShader_SetupGeometry_After(RE::BSRenderPass* a_pass);
 
-	eastl::hash_map<const void*, uint8_t> roomNodes;
+	eastl::hash_map<RE::NiNode*, uint8_t> roomNodes;
 
 	struct Hooks
 	{
