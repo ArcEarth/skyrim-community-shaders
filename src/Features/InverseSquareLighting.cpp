@@ -62,7 +62,7 @@ void InverseSquareLighting::ProcessLight(LightLimitFix::LightData& light, RE::BS
 
 	const bool isInvSq = light.lightFlags.any(LightLimitFix::LightFlags::InverseSquare);
 	if (bsLight->pointLight && editor.enabled && ((isInvSq && editor.disableInvSqLights) || (!isInvSq && editor.disableRegularLights)))
-		light.lightFlags.set(LightLimitFix::LightFlags::OIT_DISABLED);
+		light.lightFlags.set(LightLimitFix::LightFlags::Disabled);
 
 	if (bsLight->pointLight && isInvSq) {
 		const float intensity = runtimeData->fade * 4;
@@ -108,7 +108,7 @@ float InverseSquareLighting::BSLight_GetLuminance::thunk(RE::BSLight* bsLight, R
 	auto* niLight = bsLight->light.get();
 	const auto runtimeData = ISLCommon::RuntimeLightDataExt::Get(niLight);
 
-	if (refLight == niLight || runtimeData->flags.any(LightLimitFix::LightFlags::OIT_DISABLED))
+	if (refLight == niLight || runtimeData->flags.any(LightLimitFix::LightFlags::Disabled))
 		return 0.0f;
 
 	if (!bsLight->pointLight || runtimeData->flags.none(LightLimitFix::LightFlags::InverseSquare))

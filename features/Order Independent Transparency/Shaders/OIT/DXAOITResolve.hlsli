@@ -2,8 +2,6 @@
 #define DXAOITRESOLVE_H
 #define OIT_RESOLVE 1
 
-Texture2D<unorm float> TexWaterDepth : register(t0);
-
 #include "OIT/DXAOIT.hlsli"
 #include "OIT/FragmentList.hlsli"
 
@@ -14,6 +12,8 @@ Texture2D<unorm float> TexWaterDepth : register(t0);
 #else
 #define OIT_RESOLVE_FUNC AOITResolve
 #endif
+
+Texture2D<unorm float> TexWaterDepth : register(t2);
 
 void AOITDebug(uint2 screenAddress, out float4 color, out float4 wcolor
 #if OIT_WRITE_DEPTH

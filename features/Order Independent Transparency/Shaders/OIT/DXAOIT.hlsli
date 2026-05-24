@@ -16,7 +16,25 @@
 
 #ifndef H_OIT
 #define H_OIT
-#include "OIT/OITCommon.hlsli"
+
+
+//////////////////////////////////////////////
+// Defines
+//////////////////////////////////////////////
+
+#ifndef OIT_NODE_COUNT 
+#define OIT_NODE_COUNT			(8)
+#endif
+
+#define OIT_FIRST_NODE_TRANS	(1)
+#define OIT_RT_COUNT			(OIT_NODE_COUNT / 4)
+#define OIT_LOOP_COUNT			4
+#define OIT_EMPTY_NODE_DEPTH	(1E30)
+
+// Forces compression to only work on the second half of the nodes (cheaper and better IQ in most cases)
+#if OIT_NODE_COUNT >= 8
+#define AOIT_DONT_COMPRESS_FIRST_HALF 
+#endif
 
 //////////////////////////////////////////////
 // Structs

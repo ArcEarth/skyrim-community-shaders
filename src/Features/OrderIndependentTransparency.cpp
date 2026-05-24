@@ -4,11 +4,11 @@
 #include "Upscaling.h"
 #include "Features/TerrainBlending.h"
 #include "Deferred.h"
-#pragma optimize("", off)
+
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderIndependentTransparency::Method,
 	{ 
-		{ OrderIndependentTransparency::Method::OIT_DISABLED, "Disabled" },
-		{ OrderIndependentTransparency::Method::OIT_AT, "AT" }
+		{ OrderIndependentTransparency::Method::Disabled, "Disabled" },
+		{ OrderIndependentTransparency::Method::AdaptiveTransparency, "AT" }
 	}
 )
 
@@ -16,51 +16,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OrderIndependentTransparency::Se
 	Method,
 	BufferSize,
 	MaxLayers)
-
-std::span<const D3D_SHADER_MACRO> OrderIndependentTransparency::GetShaderDefines() const
-{
-	// OIT = OIT_METHOD_DEFINES[settings.Method]
-	// OIT_NODE_COUNT = settings.MaxLayers
-	return { &shaderDefines[0], 1UZ + (settings.Method == Method::OIT_RVO) };
-}
-
-static constexpr const char OIT_METHOD_DEFINES[][2] = { "0", "1", "1", "1", "2" };
-bool OrderIndependentTransparency::UpdateShaderDefines()
-{
-	D3D_SHADER_MACRO defines[2] = { 0 };
-	defines[0].Name = "OIT";
-	defines[0].Definition = OIT_METHOD_DEFINES[(int)settings.Method];
-	if (settings.Method == Method::OIT_RVO)
-	{
-		defines[1].Name = "OIT_NODE_COUNT";
-		defines[1].Definition = shaderDefineBuffer;
-
-		// convert MaxLayers to string in shaderDefineBuffer
-		for (char& c : shaderDefineBuffer) c = 0;
-		std::to_chars(shaderDefineBuffer, shaderDefineBuffer + sizeof(shaderDefineBuffer), GetNodeCount());
-	}
-
-	auto SV = [](const char* str) { return str ? std::string_view(str) : std::string_view{}; };
-
-	if (SV(shaderDefines[0].Definition) != SV(defines[0].Definition) || SV(shaderDefines[1].Definition) != SV(defines[1].Definition))
-	{
-		shaderDefines[0] = defines[0];
-		shaderDefines[1] = defines[1];
-
-		auto new_defines = GetShaderDefines();
-		auto define_str = new_defines | std::views::transform([](const D3D_SHADER_MACRO& def) {
-			if (def.Name && def.Definition)
-				return std::string(def.Name) + "=" + std::string(def.Definition) + " ";
-			else if (def.Name)
-				return std::string(def.Name);
-			else
-				return std::string{};
-		}) | std::views::join_with(',') | std::ranges::to<std::string>();
-		logger::info("[OIT] Shader defines updated [{}]: {}", new_defines.size(), define_str);
-		return true;
-	}
-	return false;
-}
 
 bool OrderIndependentTransparency::HasShaderDefine(RE::BSShader::Type shaderType)
 {
@@ -141,7 +96,6 @@ void OrderIndependentTransparency::PostPostLoad()
 
 void OrderIndependentTransparency::DataLoaded()
 {
-	UpdateShaderDefines();
 }
 
 void OrderIndependentTransparency::DrawSettings()
@@ -151,7 +105,6 @@ void OrderIndependentTransparency::DrawSettings()
 		bool PixelBuffer = false;
 		bool ConstantBuffer = false;
 		bool CompositionShader = false;
-		bool ShaderDefines = false;
 
 		~DirtyFlags()
 		{
@@ -160,23 +113,12 @@ void OrderIndependentTransparency::DrawSettings()
 				oit.featureCB.AlphaThreshold = oit.settings.AlphaThreshold;
 				oit.featureCB.DepthThreshold = oit.settings.DepthThreshold;
 			}
-			if (ShaderDefines)
-			{
-				if (oit.UpdateShaderDefines()) {
-					logger::info("[OIT] Shader defines changed, clearing shader cache.");
-					globals::shaderCache->Clear();
-					if (oit.settings.Method == Method::OIT_RVO && !oit.colorBuffer.has_value())
-					{
-						PixelBuffer = true;
-					}
-				}
-			}
 			if (PixelBuffer) {
 				auto* renderer = globals::game::renderer;
 				auto& mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 				D3D11_TEXTURE2D_DESC mainDesc;
 				mainTex.texture->GetDesc(&mainDesc);
-				oit.SetupPixelBuffers(oit.settings.BufferSize * mainDesc.Width * mainDesc.Height);
+				oit.AllocateFragmentListNodes(oit.settings.BufferSize * mainDesc.Width * mainDesc.Height);
 			}
 			if (CompositionShader) {
 				oit.ClearShaderCache();
@@ -184,49 +126,31 @@ void OrderIndependentTransparency::DrawSettings()
 		}
 	} dirtied;
 
-	struct EnableScope
-	{
-		bool Disabled;
-		EnableScope(bool EnableCondition) : Disabled(!EnableCondition)
-		{
-			if (Disabled) ImGui::BeginDisabled();
-		}
-		~EnableScope() 
-		{
-			if (Disabled) ImGui::EndDisabled();
-		}
-	};
-
 	if (ImGui::TreeNodeEx("Method", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		/*dirtied.ShaderDefines |=*/
-		ImGui::RadioButton("Disable", (int*)&settings.Method, Method::OIT_DISABLED);
+		ImGui::RadioButton("Disable", (int*)&settings.Method, Method::Disabled);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Turn off OIT without unload it.");
 		}
-		dirtied.ShaderDefines |= ImGui::RadioButton("Visualization (For performance and tuning)", (int*)&settings.Method, Method::OIT_VISUALIZE);
+		ImGui::RadioButton("Visualization (For performance and tuning)", (int*)&settings.Method, Method::DebugVisualization);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Visualize the number of transparent layers to blend per pixel\n"
 						"Useful to tune performance settings"
 						"The color coding is blue, cyan, green, yellow, orange, red, purple, white.");
 		}
-		dirtied.ShaderDefines |= ImGui::RadioButton("Balanced (Enable)", (int*)&settings.Method, Method::OIT_AT);
+		ImGui::RadioButton("Balanced (Enable)", (int*)&settings.Method, Method::AdaptiveTransparency);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("\"Adaptive Transparency\" technique.\n"
 						"It provide accurate result before Max Layers is reach.\n"
 						"After the limit, a minimal error estimation is used.\n"
 						"This method is fast, but may have flicker or artifacts beyond max layer");
 		}
-		dirtied.ShaderDefines |= ImGui::RadioButton("Fast Approximation (*)", (int*)&settings.Method, Method::OIT_BLENDED);
+		ImGui::RadioButton("Fast Approximation (*)", (int*)&settings.Method, Method::WeightedBlendedOIT);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("\"Weighted, Blended OIT\" technique.\n"
 						"Fast but INACCURATE approximation of the OIT effect.\n"
 						"Have MAJOR problem with additive blend layers\n"
 						"like RAIN or SNOW weather");
-		}
-		dirtied.ShaderDefines |= ImGui::RadioButton("Quality (*)", (int*)&settings.Method, Method::OIT_RVO);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Multi layer alpha blend, requires DirectX 11.3+");
 		}
 		ImGui::TreePop();
 	}
@@ -270,45 +194,33 @@ void OrderIndependentTransparency::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("CPU Time spend issuing the OIT composition draw");
 		}
-		{
-			EnableScope _(settings.Method == Method::OIT_AT);
-			dirtied.PixelBuffer |= ImGui::SliderInt("Pixel Buffer Size", (int*)&settings.BufferSize, 2, 16);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Multiplier of the back buffer size for holding transparent layers.\n"
-					"You may experience flickering when this buffer is overflowed.\n"
-					"Adjust based on your system's performance and memory capacity.");
-			}
+		dirtied.PixelBuffer |= ImGui::SliderInt("Pixel Buffer Size", (int*)&settings.BufferSize, 2, 16);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Multiplier of the back buffer size for holding transparent layers.\n"
+						"You may experience flickering when this buffer is overflowed.\n"
+						"Adjust based on your system's performance and memory capacity.");
 		}
-		{
-			EnableScope _(settings.Method == Method::OIT_AT || settings.Method == Method::OIT_RVO);
-			int MaxLayers = settings.MaxLayers;
-			ImGui::SliderInt("Max Layers", &MaxLayers, 4, 32, "%d", ImGuiSliderFlags_AlwaysClamp);
-			MaxLayers = ((MaxLayers + 2) / 4) * 4; // Round to multiple of 4
-			if (MaxLayers != (int)settings.MaxLayers) {
-				settings.MaxLayers = MaxLayers;
-				dirtied.ShaderDefines = true;
-				dirtied.CompositionShader = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Maximum layers to blend in OIT composition\n"
-					"Layers exceeding this limit may introduce rendering artifacts\n"
-					"Increasing this value can have performance impact.");
-			}
+		if (settings.Method != Method::AdaptiveTransparency) ImGui::BeginDisabled();
+		dirtied.CompositionShader |= ImGui::SliderInt("Max Layers", (int*)&settings.MaxLayers, 4, 32);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Maximum layers to blend in OIT composition\n"
+						"Layers exceeding this limit may introduce rendering artifacts\n"
+						"Increasing this value can have performance impact.");
 		}
-		dirtied.ConstantBuffer |= ImGui::SliderFloat("Alpha Cutoff", &settings.AlphaThreshold, 0.0f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (settings.Method != Method::AdaptiveTransparency) ImGui::EndDisabled();
+		dirtied.ConstantBuffer |= ImGui::SliderFloat("Alpha Cutoff", &settings.AlphaThreshold, 0.0f, 0.1f, "%.3f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Alpha cutoff below which pixels are discarded.\n"
 						"Increase this value to improve performance slightly but could have noticeable artifact.\n"
 						"For example, increasing this value beyond 0.01 may cause rain particles to fade.");
 		}
-		dirtied.ConstantBuffer |= ImGui::SliderFloat("Depth Cutoff", &settings.DepthThreshold, 0.9f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+		dirtied.ConstantBuffer |= ImGui::SliderFloat("Depth Cutoff", &settings.DepthThreshold, 0.9f, 1.0f, "%.4f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Camera space depth threshold to prevent z-fighting on 32 bits float precision limit.\n"
 						"Decreasing this value if you notice z-fighting on overlapping transparent surfaces.\n"
 						"However, decreasing this value too much may cause some surfaces to disappear.");
 		}
+		ImGui::BeginDisabled();
 		ImGui::SliderFloat("Distance Threshold (BUGGED ATM)", &settings.DistanceThreshold, 0.f, 500'000.f, "%.0f units");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Distance to camera before enabling OIT, to exclude large & complex distant volumetric fogs.\n"
@@ -316,6 +228,7 @@ void OrderIndependentTransparency::DrawSettings()
 						"Use `Visualize` mode to help you adjust this value to exclude the distant fogs."
 						"1 `unit` = 1.428cm or 0.5625\"");
 		}
+		ImGui::EndDisabled();
 		ImGui::TreePop();
 	}
 }
@@ -326,7 +239,6 @@ void OrderIndependentTransparency::LoadSettings(json& o_json)
 	featureCB.AlphaThreshold = settings.AlphaThreshold;
 	featureCB.DepthThreshold = settings.DepthThreshold;
 	featureCB.Flags = settings.CaptureMultiplicativeLayer ? 1 : 0;
-	UpdateShaderDefines();
 }
 
 void OrderIndependentTransparency::SaveSettings(json& o_json)
@@ -366,15 +278,17 @@ void OrderIndependentTransparency::SetupResources()
 	logger::info("[OIT] Setting up Order Independent Transparency resources...");
 	{
 		auto texDesc = mainDesc;
+		// CD3D11_TEXTURE2D_DESC texDesc;
 		texDesc.Format = DXGI_FORMAT_R32_UINT;
+		//texDesc.Width = mainDesc.Width;
+		//texDesc.Height = mainDesc.Height;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		try {
-			headerBuffer.emplace(texDesc);
+			fragmentListHead.emplace(texDesc);
 		} catch (const DX::com_exception& e) {
-			logger::error("Failed to create oit header texture @{}x{}: {}", mainDesc.Width, mainDesc.Height, e.what());
+			logger::error("Failed to create fragment list head texture @{}x{}: {}", mainDesc.Width, mainDesc.Height, e.what());
 			return;
 		}
-		headerBuffer->resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)sizeof("OIT Header") - 1, "OIT Header");
 
 		CD3D11_SHADER_RESOURCE_VIEW_DESC srvDesc(
 			D3D11_SRV_DIMENSION_TEXTURE2D,
@@ -384,13 +298,13 @@ void OrderIndependentTransparency::SetupResources()
 			D3D11_UAV_DIMENSION_TEXTURE2D,
 			texDesc.Format);
 		try {
-			headerBuffer->CreateSRV(srvDesc);
+			fragmentListHead->CreateSRV(srvDesc);
 		} catch (const DX::com_exception& e) {
 			logger::error("Failed to create fragment list head SRV: {}", e.what());
 			return;
 		}
 		try {
-			headerBuffer->CreateUAV(uavDesc);
+			fragmentListHead->CreateUAV(uavDesc);
 		} catch (const DX::com_exception& e) {
 			logger::error("Failed to create fragment list head UVA: {}", e.what());
 			return;
@@ -398,8 +312,8 @@ void OrderIndependentTransparency::SetupResources()
 	}
 
 	{
-		UINT numElem = mainDesc.Width * mainDesc.Height;
-		SetupPixelBuffers(numElem);
+		UINT numElem = settings.BufferSize * mainDesc.Width * mainDesc.Height;
+		AllocateFragmentListNodes(numElem);
 	}
 
 	{
@@ -465,141 +379,117 @@ void OrderIndependentTransparency::SetupResources()
 
 void OrderIndependentTransparency::ClearShaderCache()
 {
-	csAT.detach();
-	csVisualize.detach();
-	csBlend.detach();
-	psAT.detach();
-	psVisualize.detach();
-	psBlend.detach();
-	psROV.detach();
+	resolveCS.detach();
+	debugCS.detach();
+	blendCS.detach();
+	resolvePS.detach();
+	debugPS.detach();
+	blendPS.detach();
 	CompileShaders();
-}
-
-uint OrderIndependentTransparency::GetNodeCount() const
-{
-	uint nodes = std::clamp<uint>(settings.MaxLayers, 1, 32);
-	return nodes % 4 == 0 ? nodes : nodes - nodes % 4 + 4;
 }
 
 void OrderIndependentTransparency::CompileShaders()
 {
 	// OIT_NODE_COUNT = MaxLayers
-	uint nodes = GetNodeCount();
+	uint nodes = std::clamp<uint>(settings.MaxLayers, 1, 32);
+	nodes = nodes % 4 == 0 ? nodes : nodes - nodes % 4 + 4;
 	char nodesStr[4] = { 0 };
 	std::to_chars(nodesStr, nodesStr + 4, nodes);
-	const char* writeDepthDefine = settings.WriteDepth ? "1" : "0";
 
-	logger::info("[OIT] Compiling Order Independent Transparency shaders, OIT_NODE_COUNT={}, OIT_WRITE_DEPTH={}...", nodesStr, writeDepthDefine);
+	logger::info("[OIT] Compiling Order Independent Transparency shaders, OIT_NODE_COUNT={}...", nodesStr);
 
-	//if (!csAT)
-	//{
-	//	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.cs.hlsl", { { "OIT_NODE_COUNT", nodesStr } }, "cs_5_0"))) {
-	//		csAT.attach(rawPtr);
-	//	} else {
-	//		logger::error("Failed to compile Order Independent Transparency resolve compute shader.");
-	//		return;
-	//	}
-	//}
-	//if (!csVisualize) {
-	//	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.cs.hlsl", { { "OIT_DEBUG", "1" } }, "cs_5_0"))) {
-	//		csVisualize.attach(rawPtr);
-	//	} else {
-	//		logger::error("Failed to compile Order Independent Transparency visualize compute shader.");
-	//		return;
-	//	}
-	//}
-	//if (!csBlend) {
-	//	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.cs.hlsl", { { "OIT_BLENDED", "1" } }, "cs_5_0"))) {
-	//		csBlend.attach(rawPtr);
-	//	} else {
-	//		logger::error("Failed to compile Order Independent Transparency weighted blend compute shader.");
-	//		return;
-	//	}
-	//}
-	if (/*settings.Method == OIT_VISUALIZE && */!psVisualize) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_DEBUG", "1" } }, "ps_5_0"))) {
-			psVisualize.attach(rawPtr);
+	if (!resolveCS)
+	{
+		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.cs.hlsl", { { "OIT_NODE_COUNT", nodesStr } }, "cs_5_0"))) {
+			resolveCS.attach(rawPtr);
+		} else {
+			logger::error("Failed to compile Order Independent Transparency resolve compute shader.");
+			return;
+		}
+	}
+	if (!debugCS) {
+		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.cs.hlsl", { { "OIT_DEBUG", "1" } }, "cs_5_0"))) {
+			debugCS.attach(rawPtr);
+		} else {
+			logger::error("Failed to compile Order Independent Transparency visualize compute shader.");
+			return;
+		}
+	}
+	if (!blendCS) {
+		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.cs.hlsl", { { "OIT_BLENDED", "1" } }, "cs_5_0"))) {
+			blendCS.attach(rawPtr);
+		} else {
+			logger::error("Failed to compile Order Independent Transparency weighted blend compute shader.");
+			return;
+		}
+	}
+	if (!debugPS) {
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.ps.hlsl", { { "OIT_DEBUG", "1" } }, "ps_5_0"))) {
+			debugPS.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency debug pixel shader.");
+			return;
 		}
 	}
-	if (/*settings.Method == OIT_AT && */!psAT) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_AT", "1" }, { "OIT_NODE_COUNT", nodesStr }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
-			psAT.attach(rawPtr);
+	if (!resolvePS) {
+		const char* writeDepthDefine = settings.WriteDepth ? "1" : "0";
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.ps.hlsl", { { "OIT_NODE_COUNT", nodesStr }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
+			resolvePS.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency resolve pixel shader.");
+			return;
 		}
 	}
-	if (/*settings.Method == OIT_BLENDED && */!psBlend) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_BLENDED", "1" }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
-			psBlend.attach(rawPtr);
+	if (!blendPS) {
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\DXResolve.ps.hlsl", { { "OIT_BLENDED", "1" } }, "ps_5_0"))) {
+			blendPS.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency blend pixel shader.");
-		}
-	}
-	if (/*settings.Method == OIT_RVO && */!psROV) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_ROV", "1" }, { "OIT_NODE_COUNT", nodesStr }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
-			psROV.attach(rawPtr);
-		} else {
-			logger::error("Failed to compile Order Independent Transparency ROV resolve pixel shader.");
+			return;
 		}
 	}
 }
 
-static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view name, uint elements, uint size, bool counter = false)
+void OrderIndependentTransparency::AllocateFragmentListNodes(uint numElem)
 {
+	static constexpr UINT structSize = sizeof(FragmentListNode);
+	featureCB.MaxListNodes = numElem;
+
 	CD3D11_BUFFER_DESC bufferDesc(
-		elements * size,
+		structSize * numElem,
 		D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
 		D3D11_USAGE_DEFAULT,
 		0,
 		D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
-		size);
+		structSize);
 	try {
-		buffer.emplace(bufferDesc);
+		fragmentListNode.emplace(bufferDesc);
 	} catch (const DX::com_exception& e) {
 		logger::error("Failed to create fragment list nodes buffer: {}", e.what());
 		return;
 	}
-	buffer->resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.size(), name.data());
 
 	CD3D11_SHADER_RESOURCE_VIEW_DESC srvDesc(
 		D3D11_SRV_DIMENSION_BUFFER,
 		DXGI_FORMAT_UNKNOWN,
-		0, elements);
+		0, numElem);
+	CD3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc(
+		D3D11_UAV_DIMENSION_BUFFER,
+		DXGI_FORMAT_UNKNOWN,
+		0, numElem, UINT(-1), D3D11_BUFFER_UAV_FLAG_COUNTER);
 	try {
-		buffer->CreateSRV(srvDesc);
+		fragmentListNode->CreateSRV(srvDesc);
 	} catch (const DX::com_exception& e) {
 		logger::error("Failed to create fragment list nodes SRV: {}", e.what());
 		return;
 	}
-
-	CD3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc(
-		D3D11_UAV_DIMENSION_BUFFER,
-		DXGI_FORMAT_UNKNOWN,
-		0, elements, UINT(-1), counter ? D3D11_BUFFER_UAV_FLAG_COUNTER : 0);
 	try {
-		buffer->CreateUAV(uavDesc);
+		fragmentListNode->CreateUAV(uavDesc);
 	} catch (const DX::com_exception& e) {
 		logger::error("Failed to create fragment list nodes UAV: {}", e.what());
 		return;
 	}
-}
 
-void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
-{
-	uint BufferSize = settings.BufferSize * numElem;
-	if (featureCB.MaxListNodes != BufferSize)
-	{
-		featureCB.MaxListNodes = BufferSize;
-		CreateStructBuffer(nodesBuffer, "OIT Nodes", BufferSize, sizeof(FragmentListNode), true);
-	}
-	if (settings.Method == Method::OIT_RVO)
-	{
-		uint NodeCount = GetNodeCount();
-		CreateStructBuffer(colorBuffer, "OIT Color", numElem, sizeof(uint32_t) * 4 * NodeCount);
-		CreateStructBuffer(depthBuffer, "OIT Depth", numElem, sizeof(float) * 4 * NodeCount);
-	}
 }
 
 enum AlphaBlendMode : uint32_t
@@ -641,20 +531,12 @@ void OrderIndependentTransparency::PreDrawHack()
 	static constexpr uint OITMultiplicativeDescriptor = std::to_underlying(OITMultiplicative);
 	static constexpr uint OITMultiplicativeAlphaDescriptor = std::to_underlying(OITMultiplicative) | std::to_underlying(OITAdditive);
 	static constexpr uint OITDepthWriteDescriptor = std::to_underlying(OITDepthWrite);
-	static constexpr uint OITDisabledDescriptor = std::to_underlying(OITDisabled);
 
 	auto& descriptor = globals::state->permutationData.ExtraFeatureDescriptor;
-	descriptor &= ~(OITAddtiveDescriptor | OITMultiplicativeDescriptor | OITDepthWriteDescriptor | OITDisabledDescriptor);
+	descriptor &= ~(OITAddtiveDescriptor | OITMultiplicativeDescriptor | OITDepthWriteDescriptor);
 
 	if (!inAlphaPass/* || !closeEnough*/) {
 		return;
-	}
-
-	// Disable OIT when for very distant objects, e.g. 100 layers of volumetric fog on the horizon
-	if (!closeEnough)
-	{
-		logger::debug("[OIT] Disabling OIT for distant object @.");
-		descriptor |= OITDisabledDescriptor;
 	}
 
 	auto shadowState = globals::game::shadowState;
@@ -693,7 +575,7 @@ void OrderIndependentTransparency::PreDrawHack()
 	if (settings.OverrideRenderTargets || !REL::Module::IsAE())
 	{
 		// Force render target and UAVs
-		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2 + settings.Method == OIT_RVO, uavs.data(), nullptr);
+		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), nullptr);
 		lastVS = *globals::game::currentPixelShader;
 	}
 }
@@ -730,7 +612,7 @@ void OrderIndependentTransparency::SetupGeometry(RE::BSShader*, RE::BSRenderPass
 	//float rdistance = distance - geometryBound.radius;
 	if (viewPos.y < settings.DistanceThreshold) {
 		closeEnough = true;
-		 logger::debug("Close enough for OIT");
+		// logger::debug("Close enough for OIT");
 	}
 }
 
@@ -749,7 +631,7 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	inAlphaPass = true;
 	calls = 0;
 	lastVS = nullptr;
-	closeEnough = false;
+	closeEnough = true; // Current disabled because the hook to set closeEnough to true (SetupGeometry) is after the OIT shader flag set (TechniqueBegin)
 
 	logger::debug("Beginning OIT alpha group camera pos = {}, camera world position = {}", cameraPos, cameraWorld.translate);
 
@@ -757,7 +639,7 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 
 	auto* renderer = globals::game::renderer;
 	ID3D11DeviceContext* context = globals::d3d::context;
-	ID3D11UnorderedAccessView* headerUAV = headerBuffer->uav.get();
+	ID3D11UnorderedAccessView* fragmentListHeadUAV = fragmentListHead->uav.get();
 	// context->OMGetRenderTargets(0, NULL, sceneDSV.put());
 
 	// Initialize the first node offset RW UAV with a NULL offset (end of the list)
@@ -777,8 +659,10 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 		context->CopyResource(mainCopy.texture, main.texture);
 	}
 
-	context->ClearUnorderedAccessViewUint(headerUAV, clearValuesHead);
+	context->ClearUnorderedAccessViewUint(fragmentListHeadUAV, clearValuesHead);
+	// FillFragmentListConstants(pD3DImmediateContext, mLisTexNodeCount * 2);
 
+	uavs = { fragmentListHead->uav.get(), fragmentListNode->uav.get() };
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& TAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
 	auto& alphaOnly = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_ONLY_ALPHA];
@@ -788,17 +672,7 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	dsv = preWaterDepth.readOnlyViews[0];
 	static constexpr UINT uavcounters[2] = { 1, 1 };
 
-	if (settings.Method == OIT_RVO)
-	{
-		uavs = { headerBuffer->uav.get(), colorBuffer->uav.get(), depthBuffer->uav.get() };
-		context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 3, uavs.data(), nullptr);
-	}
-	else
-	{
-		uavs = { headerBuffer->uav.get(), nodesBuffer->uav.get(), nullptr };
-		context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), uavcounters);
-	}
-
+	context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), uavcounters);
 	context->OMSetDepthStencilState(depthStencilState.get(), 0xFF);
 }
 
@@ -865,11 +739,11 @@ void OrderIndependentTransparency::EndAlphaGroup()
 	ID3D11DeviceContext* context = globals::d3d::context;
 	auto* renderer = globals::game::renderer;
 
-	// First unbind resources from UAV in collection phase
+	// First unbind fragment lists from UAV
 	{
 		ID3D11RenderTargetView* _rtvs[3] = { nullptr, nullptr, nullptr };
-		ID3D11UnorderedAccessView* _uavs[3] = { nullptr, nullptr };
-		context->OMSetRenderTargetsAndUnorderedAccessViews(3, _rtvs, nullptr, 3, 3, _uavs, nullptr);
+		ID3D11UnorderedAccessView* _uavs[2] = { nullptr, nullptr };
+		context->OMSetRenderTargetsAndUnorderedAccessViews(3, _rtvs, nullptr, 3, 2, _uavs, nullptr);
 	}
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -886,32 +760,20 @@ void OrderIndependentTransparency::EndAlphaGroup()
 	// At this point, we need to access the actual main depth as SRV
 	else if (terrainBlending.loaded) waterDepthSrv = terrainBlending.depthSRVBackup;
 
-	ID3D11ShaderResourceView* srvs[4] = { waterDepthSrv, headerBuffer->srv.get(), nullptr, nullptr };
-	if (settings.Method == OIT_RVO)
-	{
-		srvs[2] = colorBuffer->srv.get();
-		srvs[3] = depthBuffer->srv.get();
-	}
-	else
-	{
-		srvs[2] = nodesBuffer->srv.get();
-	}
+	ID3D11ShaderResourceView* srvs[] = { fragmentListHead->srv.get(), fragmentListNode->srv.get(), waterDepthSrv };
 
 	if (settings.UsePixelShader)
 	{
 		ID3D11PixelShader* shader = nullptr;
 		switch (settings.Method) {
-		case Method::OIT_AT:
-			shader = psAT.get();
+		case Method::AdaptiveTransparency:
+			shader = resolvePS.get();
 			break;
-		case Method::OIT_BLENDED:
-			shader = psBlend.get();
+		case Method::WeightedBlendedOIT:
+			shader = blendPS.get();
 			break;
-		case Method::OIT_VISUALIZE:
-			shader = psVisualize.get();
-			break;
-		case Method::OIT_RVO:
-			shader = psROV.get();
+		case Method::DebugVisualization:
+			shader = debugPS.get();
 			break;
 		}
 
@@ -948,7 +810,7 @@ void OrderIndependentTransparency::EndAlphaGroup()
 			_dsv = mainDepth.views[0];
 		}
 
-		ScopedShaderResource srvGuard(shader, srvs, 0 );
+		ScopedShaderResource srvGuard ( shader, srvs, 0 );
 		ScopedShaderResource rtvGuard(shader, _rtvs, _dsv);
 
 		context->PSSetShader(shader, nullptr, 0);
@@ -962,14 +824,14 @@ void OrderIndependentTransparency::EndAlphaGroup()
 	{
 		ID3D11ComputeShader* shader = nullptr;
 		switch (settings.Method) {
-			case Method::OIT_AT:
-				shader = csAT.get();
+			case Method::AdaptiveTransparency:
+				shader = resolveCS.get();
 				break;
-			case Method::OIT_BLENDED:
-				shader = csBlend.get();
+			case Method::WeightedBlendedOIT:
+				shader = blendCS.get();
 				break;
-			case Method::OIT_VISUALIZE:
-				shader = csVisualize.get();
+			case Method::DebugVisualization:
+				shader = debugCS.get();
 				break;
 		}
 		context->CSSetShader(shader, NULL, 0);
@@ -990,7 +852,7 @@ void OrderIndependentTransparency::EndAlphaGroup()
 
 void OrderIndependentTransparency::BeginWater()
 {
-	if (settings.Method == Method::OIT_DISABLED)
+	if (settings.Method == Method::Disabled)
 		return;
 	auto* renderer = globals::game::renderer;
 	ID3D11DeviceContext* context = globals::d3d::context;
@@ -1014,7 +876,7 @@ void Main_RenderWorld_RenderTransparency::thunk(RE::BSShaderAccumulator* accumul
 	auto& oit = globals::features::orderIndependentTransparency;
 	bool began = false;
 	auto passBegin = clock::now();
-	if (globals::shaderCache->IsEnabled() && globals::state->inWorld && oit.loaded && oit.settings.Method != OrderIndependentTransparency::Method::OIT_DISABLED)
+	if (globals::shaderCache->IsEnabled() && globals::state->inWorld && oit.loaded && oit.settings.Method != OrderIndependentTransparency::Method::Disabled)
 	{
 		began = true;
 		// Override the pixel shaders & OM state for OIT
