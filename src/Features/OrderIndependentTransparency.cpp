@@ -558,7 +558,7 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 	try {
 		buffer.emplace(bufferDesc);
 	} catch (const DX::com_exception& e) {
-		logger::error("Failed to create fragment list nodes buffer: {}", e.what());
+		logger::error("Failed to create {} buffer: {}", name, e.what());
 		return;
 	}
 	buffer->resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.size(), name.data());
@@ -570,18 +570,20 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 	try {
 		buffer->CreateSRV(srvDesc);
 	} catch (const DX::com_exception& e) {
-		logger::error("Failed to create fragment list nodes SRV: {}", e.what());
+		logger::error("Failed to create {} SRV: {}", name, e.what());
 		return;
 	}
 
-	CD3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc(
-		D3D11_UAV_DIMENSION_BUFFER,
-		DXGI_FORMAT_UNKNOWN,
-		0, elements, UINT(-1), counter ? D3D11_BUFFER_UAV_FLAG_COUNTER : 0);
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+	uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+	uavDesc.Buffer.FirstElement = 0;
+	uavDesc.Buffer.NumElements = elements;
+	uavDesc.Buffer.Flags = counter ? D3D11_BUFFER_UAV_FLAG_COUNTER : 0;
 	try {
 		buffer->CreateUAV(uavDesc);
 	} catch (const DX::com_exception& e) {
-		logger::error("Failed to create fragment list nodes UAV: {}", e.what());
+		logger::error("Failed to create {} UAV: {}", name, e.what());
 		return;
 	}
 }
