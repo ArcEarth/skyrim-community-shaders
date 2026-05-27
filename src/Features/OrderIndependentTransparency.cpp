@@ -176,7 +176,7 @@ void OrderIndependentTransparency::DrawSettings()
 				auto& mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 				D3D11_TEXTURE2D_DESC mainDesc;
 				mainTex.texture->GetDesc(&mainDesc);
-				oit.SetupPixelBuffers(oit.settings.BufferSize * mainDesc.Width * mainDesc.Height);
+				oit.SetupPixelBuffers(mainDesc.Width * mainDesc.Height);
 			}
 			if (CompositionShader) {
 				oit.ClearShaderCache();
@@ -215,18 +215,22 @@ void OrderIndependentTransparency::DrawSettings()
 			ImGui::Text("\"Adaptive Transparency\" technique.\n"
 						"It provide accurate result before Max Layers is reach.\n"
 						"After the limit, a minimal error estimation is used.\n"
-						"This method is fast, but may have flicker or artifacts beyond max layer");
+						"This method is fast, but may have flicker or artifacts beyond max layer.");
 		}
 		dirtied.ShaderDefines |= ImGui::RadioButton("Fast Approximation (*)", (int*)&settings.Method, Method::OIT_BLENDED);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("\"Weighted, Blended OIT\" technique.\n"
 						"Fast but INACCURATE approximation of the OIT effect.\n"
 						"Have MAJOR problem with additive blend layers\n"
-						"like RAIN or SNOW weather");
+						"Like RAIN or SNOW weather where particles getting very close to camera.\n"
+						"(*) The performance of this method will be faster in final OIT release.");
 		}
 		dirtied.ShaderDefines |= ImGui::RadioButton("Quality (*)", (int*)&settings.Method, Method::OIT_RVO);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Multi layer alpha blend, requires DirectX 11.3+");
+			ImGui::Text("\"Multi Layer Alpha Blend\" (Intel AOIT) technique, requires DirectX 11.3+\n"
+						"Using 'Rasterizer Order View' feature to avoid flickering, using bounded memory.\n"
+						"Default OIT implementation in Unreal Engine.\n"
+						"Have MAJOR performance impact compare to other method.");
 		}
 		ImGui::TreePop();
 	}
@@ -567,6 +571,12 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 		D3D11_SRV_DIMENSION_BUFFER,
 		DXGI_FORMAT_UNKNOWN,
 		0, elements);
+	// D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+	// srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	// srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+	// srvDesc.BufferEx.FirstElement = 0;
+	// srvDesc.BufferEx.NumElements = elements;
+	// srvDesc.BufferEx.Flags = 0;
 	try {
 		buffer->CreateSRV(srvDesc);
 	} catch (const DX::com_exception& e) {
@@ -590,17 +600,26 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 
 void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
 {
-	uint BufferSize = settings.BufferSize * numElem;
-	if (featureCB.MaxListNodes != BufferSize)
-	{
-		featureCB.MaxListNodes = BufferSize;
-		CreateStructBuffer(nodesBuffer, "OIT Nodes", BufferSize, sizeof(FragmentListNode), true);
-	}
 	if (settings.Method == Method::OIT_RVO)
 	{
 		uint NodeCount = GetNodeCount();
-		CreateStructBuffer(colorBuffer, "OIT Color", numElem, sizeof(uint32_t) * 4 * NodeCount);
-		CreateStructBuffer(depthBuffer, "OIT Depth", numElem, sizeof(float) * 4 * NodeCount);
+		uint colorBufferStride = sizeof(uint32_t) * 4 * NodeCount;
+		uint depthBufferStride = sizeof(float) * 4 * NodeCount;
+		uint colorBufferBytes = colorBufferStride * numElem;
+		if (!colorBuffer.has_value() || colorBuffer->desc.ByteWidth != colorBufferBytes || colorBuffer->desc.StructureByteStride != colorBufferStride)
+		{
+			CreateStructBuffer(colorBuffer, "OIT Color", numElem, colorBufferStride);
+			CreateStructBuffer(depthBuffer, "OIT Depth", numElem, depthBufferStride);
+		}
+	}
+	else if (settings.Method == Method::OIT_AT || settings.Method == Method::OIT_BLENDED)
+	{
+		uint BufferSize = settings.BufferSize * numElem;
+		if (!nodesBuffer.has_value() || featureCB.MaxListNodes != BufferSize)
+		{
+			featureCB.MaxListNodes = BufferSize;
+			CreateStructBuffer(nodesBuffer, "OIT Nodes", BufferSize, sizeof(FragmentListNode), true);
+		}
 	}
 }
 
