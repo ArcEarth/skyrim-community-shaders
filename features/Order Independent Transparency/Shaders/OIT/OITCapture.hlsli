@@ -15,6 +15,9 @@
 float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
 {
 	uint flags = Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT;
+#if OIT_WRITE_DEPTH
+	flags |= OIT_FLAGS_DEPTH_WRITE; // Force enable depth write (for lighting shader right now)
+#endif
 	uint blend = flags & OIT_FLAGS_BLEND_MODS;
 	// uniform branching to skip OIT for multiplicative blend when not supported (Settings.Flags is only this option at the moment)
 	// uniform branching to skip OIT when disabled for objects (too far)

@@ -21,6 +21,12 @@ void AOITDebug(uint2 screenAddress, out float4 color, out float4 wcolor
 #endif
 )
 {
+	float waterDepth = TexWaterDepth[screenAddress];
+	waterDepth = waterDepth > 0.f ? waterDepth : OIT_EMPTY_NODE_DEPTH;
+#if OIT_WRITE_DEPTH
+	odepth = waterDepth;
+#endif
+
 	const float3 colors[8] =
 	{
 		float3(0.1, 0.1, 1.0),
@@ -154,6 +160,9 @@ void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 
 	uint firstNodeOffset = FL_GetFirstNodeOffset(screenAddress);
 	float waterDepth = TexWaterDepth[screenAddress];
 	waterDepth = waterDepth > 0.f ? waterDepth : OIT_EMPTY_NODE_DEPTH;
+#if OIT_WRITE_DEPTH
+	odepth = waterDepth;
+#endif
 
 	// Weighted, Blended, OIT for reference
 	float trans = 1.f;
@@ -174,7 +183,7 @@ void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 
 		uint flags;
 		FL_UnpackDepthAndFlags(node.depth, depth, flags);
 #if OIT_WRITE_DEPTH
-		if (flags | OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
+		if (flags & OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
 #endif
 		float4 color = FL_UnpackColor(node.color);
 		float a = max(0.01, color.w); // wboit does not support additive natrually
