@@ -10,8 +10,17 @@
 	#include "OIT/FragmentList.hlsli"
 #elif OIT == 2
 	#include "OIT/AOIT.hlsli"
+#elif OIT == 3
+	#include "OIT/WBOIT.hlsli"
 #endif
 
+#if OIT == 3
+WBOITResult OIT_CaptureWBOIT(in int2 screenAddress, in float4 color, in float depth)
+{
+	uint flags = Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT;
+	return WBOITCapture(color, screenAddress, depth, flags);
+}
+#else
 float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
 {
 	uint flags = Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT;
@@ -56,5 +65,6 @@ float4 OIT_Capture(in int2 screenAddress, in float4 color, in float depth)
 	else
 		return incolor;
 }
+#endif
 
 #endif

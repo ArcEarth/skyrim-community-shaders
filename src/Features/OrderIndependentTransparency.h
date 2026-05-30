@@ -111,6 +111,10 @@ struct OrderIndependentTransparency : Feature
 	// OIT_AT
 	std::optional<Texture2D>					headerBuffer; // RUINT32, Fragement list header buffer or clear mask
 	std::optional<Buffer>						nodesBuffer;  // Fragement list nodes buffer
+	// OIT_BLENDED
+	std::optional<Texture2D>					wboitAccumBuffer;      // RGBA16F, all transparent layers
+	std::optional<Texture2D>					wboitRevealageBuffer;  // RG16F, x = all layers, y = front of water
+	std::optional<Texture2D>					wboitFrontAccumBuffer; // RGBA16F, transparent layers in front of water
 	// OIT_RVO
 	std::optional<Buffer>						colorBuffer; // RWStructuredBuffer<uint4[OIT_NODE_COUNTS]>
 	std::optional<Buffer>						depthBuffer; // RWStructuredBuffer<float4[OIT_NODE_COUNTS]>
@@ -125,6 +129,7 @@ struct OrderIndependentTransparency : Feature
 	winrt::com_ptr<ID3D11PixelShader>			psROV;   // For adaptive transparency
 
 	winrt::com_ptr<ID3D11DepthStencilState>		depthStencilState; // depth testing but not writing
+	winrt::com_ptr<ID3D11BlendState>			wboitBlendState; // weighted blended OIT accumulation
 	winrt::com_ptr<ID3D11BlendState>			resolveBlendState; // depth testing but not writing
 	winrt::com_ptr<ID3D11DepthStencilState>		resolveDepthStencilState;  // depth testing but not writing
 

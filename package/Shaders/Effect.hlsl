@@ -431,6 +431,12 @@ struct PS_OUTPUT
 #	elif defined(NORMALS)
 	float4 NormalGlossiness: SV_Target2;
 #	endif
+#	if defined(OIT) && OIT == 3 && !defined(MOTIONVECTORS_NORMALS)
+	float4 OITRevealage: SV_Target1;
+#	endif
+#	if defined(OIT) && OIT == 3 && !defined(MOTIONVECTORS_NORMALS) && !defined(NORMALS)
+	float4 OITFrontAccum: SV_Target2;
+#	endif
 	float4 Albedo: SV_Target3;
 	float4 Specular: SV_Target4;
 	float4 Reflectance: SV_Target5;
@@ -444,6 +450,9 @@ struct PS_OUTPUT
 	float2 MotionVectors: SV_Target1;
 	float4 ScreenSpaceNormals: SV_Target2;
 #	else
+#		if defined(OIT) && OIT == 3
+	float4 OITRevealage: SV_Target1;
+#		endif
 	float4 Color2: SV_Target2;
 #	endif
 };
@@ -982,9 +991,32 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 #if defined(OIT)
+#if OIT == 3
+	WBOITResult oit = OIT_CaptureWBOIT(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+	psout.Diffuse = oit.accumAll;
+#if defined(DEFERRED)
+#if defined(MOTIONVECTORS_NORMALS)
+	psout.MotionVectors = float4(oit.revealage.xy, 0, 0);
+	psout.NormalGlossiness = oit.accumFront;
+#elif defined(NORMALS)
+	psout.OITRevealage = float4(oit.revealage.xy, 0, 0);
+	psout.NormalGlossiness = oit.accumFront;
+#else
+	psout.OITRevealage = float4(oit.revealage.xy, 0, 0);
+	psout.OITFrontAccum = oit.accumFront;
+#endif
+#elif defined(MOTIONVECTORS_NORMALS)
+	psout.MotionVectors = oit.revealage.xy;
+	psout.ScreenSpaceNormals = oit.accumFront;
+#else
+	psout.OITRevealage = float4(oit.revealage.xy, 0, 0);
+	psout.Color2 = oit.accumFront;
+#endif
+#else
 	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
 #if !defined(MOTIONVECTORS_NORMALS)
 	psout.Color2 = psout.Diffuse;
+#endif
 #endif
 #endif
 	return psout;

@@ -8,7 +8,10 @@
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderIndependentTransparency::Method,
 	{ 
 		{ OrderIndependentTransparency::Method::OIT_DISABLED, "Disabled" },
-		{ OrderIndependentTransparency::Method::OIT_AT, "AT" }
+		{ OrderIndependentTransparency::Method::OIT_VISUALIZE, "Visualize" },
+		{ OrderIndependentTransparency::Method::OIT_AT, "AT" },
+		{ OrderIndependentTransparency::Method::OIT_BLENDED, "Blended" },
+		{ OrderIndependentTransparency::Method::OIT_RVO, "RVO" }
 	}
 )
 
@@ -17,6 +20,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(OrderIndependentTransparency::Se
 	BufferSize,
 	MaxLayers)
 
+static void NormalizeSettings(OrderIndependentTransparency::Settings& settings)
+{
+	if (settings.Method == OrderIndependentTransparency::Method::OIT_BLENDED)
+	{
+		settings.UsePixelShader = true;
+		settings.WriteDepth = false;
+	}
+}
+
 std::span<const D3D_SHADER_MACRO> OrderIndependentTransparency::GetShaderDefines() const
 {
 	// OIT = OIT_METHOD_DEFINES[settings.Method]
@@ -24,7 +36,7 @@ std::span<const D3D_SHADER_MACRO> OrderIndependentTransparency::GetShaderDefines
 	return { &shaderDefines[0], 1UZ + (settings.Method == Method::OIT_RVO) };
 }
 
-static constexpr const char OIT_METHOD_DEFINES[][2] = { "0", "1", "1", "1", "2" };
+static constexpr const char OIT_METHOD_DEFINES[][2] = { "0", "1", "1", "3", "2" };
 bool OrderIndependentTransparency::UpdateShaderDefines()
 {
 	D3D_SHADER_MACRO defines[2] = { 0 };
@@ -141,6 +153,7 @@ void OrderIndependentTransparency::PostPostLoad()
 
 void OrderIndependentTransparency::DataLoaded()
 {
+	NormalizeSettings(settings);
 	UpdateShaderDefines();
 }
 
@@ -234,6 +247,7 @@ void OrderIndependentTransparency::DrawSettings()
 		}
 		ImGui::TreePop();
 	}
+	NormalizeSettings(settings);
 	ImGui::Spacing();
 	if (ImGui::TreeNodeEx("Compatibility", ImGuiTreeNodeFlags_DefaultOpen)) {
 		if (ImGui::Checkbox("Multiplicative Blend Support (*)", &settings.CaptureMultiplicativeLayer))
@@ -250,16 +264,19 @@ void OrderIndependentTransparency::DrawSettings()
 						"(*) Have a CPU cost, only enable this option if your alpha mesh is disappearing.\n"
 						"(*) This option can only affect AE for now, needs more RE for SSE/VR version.");
 		}
-		ImGui::Checkbox("Use Pixel Shader (*)", &settings.UsePixelShader);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Use pixel shader instead of compute shader for OIT resolve.\n"
-						"(*) Mostly for performance compare, we will settle with PS or CS eventually.");
+		{
+			EnableScope blendedModeScope(settings.Method != Method::OIT_BLENDED);
+			ImGui::Checkbox("Use Pixel Shader (*)", &settings.UsePixelShader);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Use pixel shader instead of compute shader for OIT resolve.\n"
+						"(*) Weighted blended OIT always resolves through the pixel shader path.");
+			}
 		}
 		if (!settings.UsePixelShader) ImGui::BeginDisabled();
 		dirtied.CompositionShader |= ImGui::Checkbox("Write Depth (*)", &settings.WriteDepth);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Allow OIT composition to write depth when meshes have the 'Write Depth' flag.\n"
-						"(*) Only aviable for Pixel Shader.");
+						"(*) Weighted blended OIT does not currently support depth writes.");
 		}
 		if (!settings.UsePixelShader) ImGui::EndDisabled();
 		ImGui::TreePop();
@@ -327,6 +344,7 @@ void OrderIndependentTransparency::DrawSettings()
 void OrderIndependentTransparency::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	NormalizeSettings(settings);
 	featureCB.AlphaThreshold = settings.AlphaThreshold;
 	featureCB.DepthThreshold = settings.DepthThreshold;
 	featureCB.Flags = settings.CaptureMultiplicativeLayer ? 1 : 0;
@@ -341,11 +359,24 @@ void OrderIndependentTransparency::SaveSettings(json& o_json)
 void OrderIndependentTransparency::RestoreDefaultSettings()
 {
 	settings = {};
+	NormalizeSettings(settings);
 	featureCB.AlphaThreshold = 0.f;
 	featureCB.Flags = 1;
 }
 
 void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format, uint bindFlags);
+
+static void CreateWBOITRenderTarget(std::optional<Texture2D>& texture, std::string_view name, const D3D11_TEXTURE2D_DESC& baseDesc, DXGI_FORMAT format)
+{
+	auto texDesc = baseDesc;
+	texDesc.Format = format;
+	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+	texture.emplace(texDesc);
+	texture->resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.size(), name.data());
+	texture->CreateSRV(CD3D11_SHADER_RESOURCE_VIEW_DESC(D3D11_SRV_DIMENSION_TEXTURE2D, format));
+	texture->CreateRTV(CD3D11_RENDER_TARGET_VIEW_DESC(D3D11_RTV_DIMENSION_TEXTURE2D, format));
+}
 
 void OrderIndependentTransparency::SetupResources()
 {
@@ -427,6 +458,47 @@ void OrderIndependentTransparency::SetupResources()
 			logger::error("Failed to create depth stencil state {}", e.what());
 			return;
 		}
+		try {
+			CreateWBOITRenderTarget(wboitAccumBuffer, "OIT WBOIT Accum", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateWBOITRenderTarget(wboitRevealageBuffer, "OIT WBOIT Revealage", mainDesc, DXGI_FORMAT_R16G16_FLOAT);
+			CreateWBOITRenderTarget(wboitFrontAccumBuffer, "OIT WBOIT Front Accum", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+		} catch (const DX::com_exception& e) {
+			logger::error("Failed to create weighted blended OIT render targets: {}", e.what());
+			return;
+		}
+
+		D3D11_BLEND_DESC wboitBlendDesc{};
+		wboitBlendDesc.AlphaToCoverageEnable = false;
+		wboitBlendDesc.IndependentBlendEnable = true;
+		for (auto slot : { 0, 2 }) {
+			auto& rt = wboitBlendDesc.RenderTarget[slot];
+			rt.BlendEnable = true;
+			rt.SrcBlend = D3D11_BLEND_ONE;
+			rt.DestBlend = D3D11_BLEND_ONE;
+			rt.BlendOp = D3D11_BLEND_OP_ADD;
+			rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+			rt.DestBlendAlpha = D3D11_BLEND_ONE;
+			rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		}
+		{
+			auto& rt = wboitBlendDesc.RenderTarget[1];
+			rt.BlendEnable = true;
+			rt.SrcBlend = D3D11_BLEND_ZERO;
+			rt.DestBlend = D3D11_BLEND_SRC_COLOR;
+			rt.BlendOp = D3D11_BLEND_OP_ADD;
+			rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+			rt.DestBlendAlpha = D3D11_BLEND_ONE;
+			rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN;
+		}
+		try {
+			DX::ThrowIfFailed(device->CreateBlendState(&wboitBlendDesc, wboitBlendState.put()));
+		} catch (const DX::com_exception& e) {
+			logger::error("Failed to create weighted blended OIT blend state {}", e.what());
+			return;
+		}
+
 		D3D11_BLEND_DESC blendDesc{};
 		blendDesc.AlphaToCoverageEnable = false;
 		blendDesc.IndependentBlendEnable = false;
@@ -535,7 +607,7 @@ void OrderIndependentTransparency::CompileShaders()
 		}
 	}
 	if (/*settings.Method == OIT_BLENDED && */!psBlend) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_BLENDED", "1" }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_BLENDED", "1" }, { "OIT_WRITE_DEPTH", "0" } }, "ps_5_0"))) {
 			psBlend.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency blend pixel shader.");
@@ -612,7 +684,7 @@ void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
 			CreateStructBuffer(depthBuffer, "OIT Depth", numElem, depthBufferStride);
 		}
 	}
-	else if (settings.Method == Method::OIT_AT || settings.Method == Method::OIT_BLENDED)
+	else if (settings.Method == Method::OIT_AT || settings.Method == Method::OIT_VISUALIZE)
 	{
 		uint BufferSize = settings.BufferSize * numElem;
 		if (!nodesBuffer.has_value() || featureCB.MaxListNodes != BufferSize)
@@ -638,6 +710,8 @@ void OrderIndependentTransparency::PreSetStateDirty()
 	}
 	globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 	globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
+	if (settings.Method == Method::OIT_BLENDED)
+		globals::game::stateUpdateFlags->set(false, RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
 	// Force depth to test only (not write)
 	auto shadowState = globals::game::shadowState;
@@ -707,11 +781,15 @@ void OrderIndependentTransparency::PreDrawHack()
 		// logger::info("Write depth @ descriptor {}.", descriptor);
 	}
 
+	if (settings.Method == Method::OIT_BLENDED)
+		globals::d3d::context->OMSetBlendState(wboitBlendState.get(), nullptr, 0xffffffff);
+
 	if (settings.OverrideRenderTargets || !REL::Module::IsAE())
 	{
-		// Force render target and UAVs
-		const UINT uavCount = 2 + (settings.Method == OIT_RVO ? 1 : 0);
-		globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, uavCount, uavs.data(), nullptr);
+		if (settings.Method == Method::OIT_BLENDED)
+			globals::d3d::context->OMSetRenderTargets((UINT)rtvs.size(), rtvs.data(), dsv);
+		else
+			globals::d3d::context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2 + (settings.Method == OIT_RVO ? 1 : 0), uavs.data(), nullptr);
 		lastVS = *globals::game::currentPixelShader;
 	}
 }
@@ -804,17 +882,33 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	auto& alphaOnly = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_ONLY_ALPHA];
 	// Need to capture pre-water depth
 	auto& preWaterDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV };
 	dsv = preWaterDepth.readOnlyViews[0];
 	static constexpr UINT uavcounters[2] = { 1, 1 };
 
-	if (settings.Method == OIT_RVO)
+	if (settings.Method == OIT_BLENDED)
 	{
+		static constexpr float clearAccum[4] = { 0, 0, 0, 0 };
+		static constexpr float clearRevealage[4] = { 1, 1, 1, 1 };
+		rtvs = { wboitAccumBuffer->rtv.get(), wboitRevealageBuffer->rtv.get(), wboitFrontAccumBuffer->rtv.get() };
+		context->ClearRenderTargetView(rtvs[0], clearAccum);
+		context->ClearRenderTargetView(rtvs[1], clearRevealage);
+		context->ClearRenderTargetView(rtvs[2], clearAccum);
+		context->OMSetRenderTargets((UINT)rtvs.size(), rtvs.data(), dsv);
+
+		using globals::features::terrainBlending;
+		ID3D11ShaderResourceView* waterDepthSrv = terrainBlending.loaded ? terrainBlending.depthSRVBackup : renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+		context->PSSetShaderResources(120, 1, &waterDepthSrv);
+		context->OMSetBlendState(wboitBlendState.get(), nullptr, 0xffffffff);
+	}
+	else if (settings.Method == OIT_RVO)
+	{
+		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV };
 		uavs = { headerBuffer->uav.get(), colorBuffer->uav.get(), depthBuffer->uav.get() };
 		context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 3, uavs.data(), nullptr);
 	}
 	else
 	{
+		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV };
 		uavs = { headerBuffer->uav.get(), nodesBuffer->uav.get(), nullptr };
 		context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), uavcounters);
 	}
@@ -891,6 +985,10 @@ void OrderIndependentTransparency::EndAlphaGroup()
 		ID3D11UnorderedAccessView* _uavs[3] = { nullptr, nullptr };
 		context->OMSetRenderTargetsAndUnorderedAccessViews(3, _rtvs, nullptr, 3, 3, _uavs, nullptr);
 	}
+	{
+		ID3D11ShaderResourceView* _srv = nullptr;
+		context->PSSetShaderResources(120, 1, &_srv);
+	}
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& alpha = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_ONLY_ALPHA];
@@ -906,18 +1004,8 @@ void OrderIndependentTransparency::EndAlphaGroup()
 	// At this point, we need to access the actual main depth as SRV
 	else if (terrainBlending.loaded) waterDepthSrv = terrainBlending.depthSRVBackup;
 
-	ID3D11ShaderResourceView* srvs[4] = { waterDepthSrv, headerBuffer->srv.get(), nullptr, nullptr };
-	if (settings.Method == OIT_RVO)
-	{
-		srvs[2] = colorBuffer->srv.get();
-		srvs[3] = depthBuffer->srv.get();
-	}
-	else
-	{
-		srvs[2] = nodesBuffer->srv.get();
-	}
-
-	if (settings.UsePixelShader)
+	const bool usePixelShader = settings.UsePixelShader;
+	if (usePixelShader)
 	{
 		ID3D11PixelShader* shader = nullptr;
 		switch (settings.Method) {
@@ -964,16 +1052,38 @@ void OrderIndependentTransparency::EndAlphaGroup()
 		// Set up pixel shader resources
 		ID3D11RenderTargetView* _rtvs[2] = { main.RTV, alpha.RTV };
 		ID3D11DepthStencilView* _dsv = nullptr;
-		if (settings.WriteDepth && settings.UsePixelShader) {
+		if (settings.WriteDepth && usePixelShader) {
 			_dsv = mainDepth.views[0];
 		}
-
-		ScopedShaderResource srvGuard(shader, srvs, 0 );
 		ScopedShaderResource rtvGuard(shader, _rtvs, _dsv);
 
 		context->PSSetShader(shader, nullptr, 0);
 
-		context->Draw(3, 0);
+		if (settings.Method == Method::OIT_BLENDED)
+		{
+			ID3D11ShaderResourceView* srvs[3] = {
+				wboitAccumBuffer->srv.get(),
+				wboitRevealageBuffer->srv.get(),
+				wboitFrontAccumBuffer->srv.get()
+			};
+			ScopedShaderResource srvGuard(shader, srvs, 0);
+			context->Draw(3, 0);
+		}
+		else
+		{
+			ID3D11ShaderResourceView* srvs[4] = { waterDepthSrv, headerBuffer->srv.get(), nullptr, nullptr };
+			if (settings.Method == OIT_RVO)
+			{
+				srvs[2] = colorBuffer->srv.get();
+				srvs[3] = depthBuffer->srv.get();
+			}
+			else
+			{
+				srvs[2] = nodesBuffer->srv.get();
+			}
+			ScopedShaderResource srvGuard(shader, srvs, 0);
+			context->Draw(3, 0);
+		}
 
 		context->PSSetShader(nullptr, nullptr, 0);
 		context->VSSetShader(nullptr, nullptr, 0);
@@ -994,6 +1104,13 @@ void OrderIndependentTransparency::EndAlphaGroup()
 		}
 		context->CSSetShader(shader, NULL, 0);
 
+		ID3D11ShaderResourceView* srvs[4] = { waterDepthSrv, headerBuffer->srv.get(), nullptr, nullptr };
+		if (settings.Method == OIT_RVO) {
+			srvs[2] = colorBuffer->srv.get();
+			srvs[3] = depthBuffer->srv.get();
+		} else {
+			srvs[2] = nodesBuffer->srv.get();
+		}
 		ID3D11UnorderedAccessView* _uavs[2] = { main.UAV, alpha.UAV };
 		ScopedShaderResource srvGuard(shader, srvs, 0);
 		ScopedShaderResource uavGuard(shader, _uavs, 0);

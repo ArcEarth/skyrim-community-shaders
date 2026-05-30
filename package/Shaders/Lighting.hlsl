@@ -353,6 +353,9 @@ struct PS_OUTPUT
 {
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
+#	if defined(OIT) && OIT == 3
+	float4 OITAux: SV_Target2;
+#	endif
 };
 #endif
 
@@ -3341,7 +3344,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #if defined(OIT)
+#if OIT == 3
+	WBOITResult oit = OIT_CaptureWBOIT(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+	psout.Diffuse = oit.accumAll;
+	psout.MotionVectors = float4(oit.revealage.xy, 0, 0);
+#if defined(DEFERRED)
+	psout.NormalGlossiness = oit.accumFront;
+#else
+	psout.OITAux = oit.accumFront;
+#endif
+#else
 	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
+#endif
 #endif
 	return psout;
 }

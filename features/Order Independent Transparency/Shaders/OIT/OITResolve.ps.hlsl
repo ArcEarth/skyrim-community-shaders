@@ -4,7 +4,9 @@
 
 #include "Upscaling/UpscaleVS.hlsl"
 
-#if defined(OIT_ROV)
+#if defined(OIT_BLENDED)
+#include "OIT/WBOITResolve.hlsli"
+#elif defined(OIT_ROV)
 #include "OIT/AOITResolve.hlsli"
 #else
 #include "OIT/DXAOITResolve.hlsli"
@@ -24,7 +26,7 @@ struct PS_OUT
 PS_OUT main(PS_INPUT input)
 {
 	PS_OUT psout;
-	float2 address = uint2(input.Position.xy);
+	uint2 address = uint2(input.Position.xy);
 	float4 color;
 	float4 wcolor;
 	
