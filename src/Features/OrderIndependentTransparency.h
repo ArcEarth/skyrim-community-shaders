@@ -112,9 +112,9 @@ struct OrderIndependentTransparency : Feature
 	std::optional<Texture2D>					headerBuffer; // RUINT32, Fragement list header buffer or clear mask
 	std::optional<Buffer>						nodesBuffer;  // Fragement list nodes buffer
 	// OIT_BLENDED
-	std::optional<Texture2D>					wboitAccumBuffer;      // RGBA16F, all transparent layers
-	std::optional<Texture2D>					wboitRevealageBuffer;  // RG16F, x = all layers, y = front of water
-	std::optional<Texture2D>					wboitFrontAccumBuffer; // RGBA16F, transparent layers in front of water
+	std::optional<Texture2D>					wboitFrontAccumalationBuffer; // RGBA16F, transparent layers in front of water
+	std::optional<Texture2D>					wboitAccumalationBuffer;      // RGBA16F, all transparent layers
+	std::optional<Texture2D>					wboitRevealageBuffer;         // RG16F, x = all layers, y = front of water
 	// OIT_RVO
 	std::optional<Buffer>						colorBuffer; // RWStructuredBuffer<uint4[OIT_NODE_COUNTS]>
 	std::optional<Buffer>						depthBuffer; // RWStructuredBuffer<float4[OIT_NODE_COUNTS]>
@@ -134,7 +134,7 @@ struct OrderIndependentTransparency : Feature
 	winrt::com_ptr<ID3D11DepthStencilState>		resolveDepthStencilState;  // depth testing but not writing
 
 	// Temporarily for setting render target in alpha pass, not reference counted
-	std::array<ID3D11RenderTargetView*,3>		rtvs; 
+	std::array<ID3D11RenderTargetView*, 6>		rtvs;
 	std::array<ID3D11UnorderedAccessView*, 3>	uavs;
 	ID3D11DepthStencilView*						dsv;
 

@@ -2,6 +2,7 @@
 #define __WBOIT__
 
 #include "OIT/OITCommon.hlsli"
+#include "OIT/WBOITWeight.hlsli"
 #include "Common/SharedData.hlsli"
 
 Texture2D<float> OITWaterDepthTexture : register(t120);
@@ -13,11 +14,9 @@ struct WBOITResult
 	float4 accumFront;
 };
 
-float WBOITComputeWeight(float alpha, float depth)
+float4 WBOITQuantizePrototypeColor(float4 color)
 {
-	float depthWeight = 1.0 - saturate(depth);
-	float weight = pow(min(1.0, saturate(alpha) * 10.0) + 0.01, 3.0) * (1e2 * (depthWeight * depthWeight * depthWeight + 1e-2));
-	return clamp(weight, 1e-2, 1e3);
+	return floor(saturate(color) * 255.0 + 0.5) / 255.0;
 }
 
 WBOITResult WBOITCapture(float4 color, int2 screenAddress, float depth, uint flags)
@@ -33,35 +32,39 @@ WBOITResult WBOITCapture(float4 color, int2 screenAddress, float depth, uint fla
 	color.w = max(0.f, color.w - SharedData::orderIndependentTransparencySettings.AlphaThreshold) / (1.f - SharedData::orderIndependentTransparencySettings.AlphaThreshold);
 #endif
 
-	float3 premulColor = 0.0.xxx;
-	float coverageAlpha = 0.0;
-	float weightAlpha = 0.0;
-	if (blend == OIT_FLAGS_MULTIPLICATIVE_A) {
-		coverageAlpha = saturate((1.0 - color.w) * color.w);
-		weightAlpha = max(coverageAlpha, 1.0 / 255.0);
-	} else if (blend == OIT_FLAGS_ADDITIVE) {
-		premulColor = color.xyz * color.w;
-		coverageAlpha = saturate(color.w * 0.25);
-		weightAlpha = max(color.w, 1.0 / 255.0);
-	} else if (blend == OIT_FLAGS_MULTIPLICATIVE) {
-		coverageAlpha = saturate(1.0 - color.w);
-		weightAlpha = max(coverageAlpha, 1.0 / 255.0);
-	} else {
-		premulColor = color.xyz * color.w;
-		coverageAlpha = saturate(color.w);
-		weightAlpha = max(coverageAlpha, 1.0 / 255.0);
+	if (blend == OIT_FLAGS_MULTIPLICATIVE_A)
+	{
+		color = float4(0.0, 0.0, 0.0, (1.0 - color.w) * color.a);
+	}
+	else if (blend == OIT_FLAGS_ADDITIVE)
+	{
+		color = float4(color.xyz * color.w, 0.0);
+	}
+	else if (blend == OIT_FLAGS_MULTIPLICATIVE)
+	{
+		color = float4(0.0, 0.0, 0.0, 1.0 - color.a);
+	}
+	else
+	{
+		color = float4(color.xyz * color.w, color.w);
 	}
 
-	if (coverageAlpha <= 0.0 && dot(premulColor, 1.0.xxx) <= 0.0)
-		return result;
+	color = saturate(color);
 
-	float weight = WBOITComputeWeight(weightAlpha, depth);
+	float a = color.w; // max(1.0/255, color.w);
+	// There is a OM blend bug that clamps the accumalated color/alpha to 1.0
+	// Thus scale it down to prevent overflow, constant weight cancels out in the end
+	// Find a proper weight function seems hard
+	// The weight provided by the paper for projected depth does not work well here
+	// Particularly bad for the vanilla rain particles in screen space
+	float weight = 0.01; // WBOITComputeWeight(color.w, depth);
+
 	float waterDepth = OITWaterDepthTexture[screenAddress];
-	bool frontOfWater = waterDepth <= 0.0 || depth <= waterDepth;
+	bool  frontOfWater = depth <= waterDepth;
 
-	result.accumAll = float4(premulColor, weightAlpha) * weight;
+	result.accumAll = color * weight;
 	result.accumFront = frontOfWater ? result.accumAll : 0.0.xxxx;
-	result.revealage = float4(1.0 - coverageAlpha, frontOfWater ? 1.0 - coverageAlpha : 1.0, 1.0, 1.0);
+	result.revealage = float4(1.0 - a, frontOfWater ? 1.0 - a : 1.0, 0, 0);
 	return result;
 }
 

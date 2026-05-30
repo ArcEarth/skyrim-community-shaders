@@ -217,7 +217,9 @@ struct PS_OUTPUT
 	float4 Color: SV_Target0;
 	float4 Normal: SV_Target1;
 #if defined(OIT) && OIT == 3
-	float4 OITAux: SV_Target2;
+	float4 OITFrontAccumalation: SV_Target3;
+	float4 OITAccumalation: SV_Target4;
+	float4 OITRevealage: SV_Target5;
 #endif
 };
 
@@ -355,9 +357,9 @@ PS_OUTPUT main(PS_INPUT input)
 #if defined(OIT)
 #if OIT == 3
 	WBOITResult oit = OIT_CaptureWBOIT(int2(input.Position.xy), psout.Color, input.Position.z);
-	psout.Color = oit.accumAll;
-	psout.Normal = float4(oit.revealage.xy, 0, 0);
-	psout.OITAux = oit.accumFront;
+	psout.OITFrontAccumalation = oit.accumFront;
+	psout.OITAccumalation = oit.accumAll;
+	psout.OITRevealage = float4(oit.revealage.xy, 0, 0);
 #else
 	psout.Color = OIT_Capture(int2(input.Position.xy), psout.Color, input.Position.z);
 #endif

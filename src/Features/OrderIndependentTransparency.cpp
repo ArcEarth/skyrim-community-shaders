@@ -459,9 +459,9 @@ void OrderIndependentTransparency::SetupResources()
 			return;
 		}
 		try {
-			CreateWBOITRenderTarget(wboitAccumBuffer, "OIT WBOIT Accum", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
-			CreateWBOITRenderTarget(wboitRevealageBuffer, "OIT WBOIT Revealage", mainDesc, DXGI_FORMAT_R16G16_FLOAT);
-			CreateWBOITRenderTarget(wboitFrontAccumBuffer, "OIT WBOIT Front Accum", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateWBOITRenderTarget(wboitFrontAccumalationBuffer, "OIT Front Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateWBOITRenderTarget(wboitAccumalationBuffer, "OIT Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateWBOITRenderTarget(wboitRevealageBuffer, "OIT Revealage", mainDesc, DXGI_FORMAT_R16G16_FLOAT);
 		} catch (const DX::com_exception& e) {
 			logger::error("Failed to create weighted blended OIT render targets: {}", e.what());
 			return;
@@ -470,7 +470,7 @@ void OrderIndependentTransparency::SetupResources()
 		D3D11_BLEND_DESC wboitBlendDesc{};
 		wboitBlendDesc.AlphaToCoverageEnable = false;
 		wboitBlendDesc.IndependentBlendEnable = true;
-		for (auto slot : { 0, 2 }) {
+		for (auto slot : { 3, 4 }) {
 			auto& rt = wboitBlendDesc.RenderTarget[slot];
 			rt.BlendEnable = true;
 			rt.SrcBlend = D3D11_BLEND_ONE;
@@ -482,7 +482,7 @@ void OrderIndependentTransparency::SetupResources()
 			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 		}
 		{
-			auto& rt = wboitBlendDesc.RenderTarget[1];
+			auto& rt = wboitBlendDesc.RenderTarget[5];
 			rt.BlendEnable = true;
 			rt.SrcBlend = D3D11_BLEND_ZERO;
 			rt.DestBlend = D3D11_BLEND_SRC_COLOR;
@@ -889,10 +889,10 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	{
 		static constexpr float clearAccum[4] = { 0, 0, 0, 0 };
 		static constexpr float clearRevealage[4] = { 1, 1, 1, 1 };
-		rtvs = { wboitAccumBuffer->rtv.get(), wboitRevealageBuffer->rtv.get(), wboitFrontAccumBuffer->rtv.get() };
-		context->ClearRenderTargetView(rtvs[0], clearAccum);
-		context->ClearRenderTargetView(rtvs[1], clearRevealage);
-		context->ClearRenderTargetView(rtvs[2], clearAccum);
+		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV, wboitFrontAccumalationBuffer->rtv.get(), wboitAccumalationBuffer->rtv.get(), wboitRevealageBuffer->rtv.get() };
+		context->ClearRenderTargetView(rtvs[3], clearAccum);
+		context->ClearRenderTargetView(rtvs[4], clearAccum);
+		context->ClearRenderTargetView(rtvs[5], clearRevealage);
 		context->OMSetRenderTargets((UINT)rtvs.size(), rtvs.data(), dsv);
 
 		using globals::features::terrainBlending;
@@ -981,9 +981,14 @@ void OrderIndependentTransparency::EndAlphaGroup()
 
 	// First unbind resources from UAV in collection phase
 	{
-		ID3D11RenderTargetView* _rtvs[3] = { nullptr, nullptr, nullptr };
-		ID3D11UnorderedAccessView* _uavs[3] = { nullptr, nullptr };
-		context->OMSetRenderTargetsAndUnorderedAccessViews(3, _rtvs, nullptr, 3, 3, _uavs, nullptr);
+		if (settings.Method == OIT_BLENDED) {
+			ID3D11RenderTargetView* _rtvs[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+			context->OMSetRenderTargets(6, _rtvs, nullptr);
+		} else {
+			ID3D11RenderTargetView* _rtvs[3] = { nullptr, nullptr, nullptr };
+			ID3D11UnorderedAccessView* _uavs[3] = { nullptr, nullptr, nullptr };
+			context->OMSetRenderTargetsAndUnorderedAccessViews(3, _rtvs, nullptr, 3, 3, _uavs, nullptr);
+		}
 	}
 	{
 		ID3D11ShaderResourceView* _srv = nullptr;
@@ -1062,9 +1067,9 @@ void OrderIndependentTransparency::EndAlphaGroup()
 		if (settings.Method == Method::OIT_BLENDED)
 		{
 			ID3D11ShaderResourceView* srvs[3] = {
-				wboitAccumBuffer->srv.get(),
-				wboitRevealageBuffer->srv.get(),
-				wboitFrontAccumBuffer->srv.get()
+				wboitFrontAccumalationBuffer->srv.get(),
+				wboitAccumalationBuffer->srv.get(),
+				wboitRevealageBuffer->srv.get()
 			};
 			ScopedShaderResource srvGuard(shader, srvs, 0);
 			context->Draw(3, 0);

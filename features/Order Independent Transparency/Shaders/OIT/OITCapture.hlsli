@@ -18,6 +18,22 @@
 WBOITResult OIT_CaptureWBOIT(in int2 screenAddress, in float4 color, in float depth)
 {
 	uint flags = Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT;
+	WBOITResult empty;
+	empty.accumAll = 0.0.xxxx;
+	empty.revealage = 1.0.xxxx;
+	empty.accumFront = 0.0.xxxx;
+
+	uint blend = flags & OIT_FLAGS_BLEND_MODS;
+	if (((blend & OIT_FLAGS_MULTIPLICATIVE) && (SharedData::orderIndependentTransparencySettings.Flags == 0))
+		|| (flags & OIT_FLAGS_DISABLED))
+		return empty;
+
+	[branch]
+	if (SharedData::orderIndependentTransparencySettings.DepthThreshold < 1.0f) {
+		if (depth > SharedData::orderIndependentTransparencySettings.DepthThreshold)
+			return empty;
+	}
+
 	return WBOITCapture(color, screenAddress, depth, flags);
 }
 #else
