@@ -3,9 +3,9 @@
 
 float WBOITComputeWeight(float alpha, float depth)
 {
-	float depthWeight = max(0.01, 3000.0 * pow(1.0 - depth, 3.0));
-	float a = max(0.01, alpha);
-	return depthWeight * (alpha > 0.0 ? a : 0.2);
+	float d = max(0.2, 1.0 - depth);
+	float w = max(0.01, 3000.0 * d * d * d);
+	return clamp(alpha * w, 0.1, 1.0);
 }
 
 #endif
