@@ -997,7 +997,7 @@ PS_OUTPUT main(PS_INPUT input)
 	WBOITResult oit = OIT_CaptureWBOIT(int2(input.Position.xy), psout.Diffuse, input.Position.z);
 	psout.OITFrontAccumalation = oit.accumFront;
 	psout.OITAccumalation = oit.accumAll;
-	psout.OITRevealage = float4(oit.revealage.xy, 0, 0);
+	psout.OITRevealage = oit.revealage;
 #else
 	psout.Diffuse = OIT_Capture(int2(input.Position.xy), psout.Diffuse, input.Position.z);
 #if !defined(MOTIONVECTORS_NORMALS)

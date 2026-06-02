@@ -18,7 +18,10 @@
 WBOITResult OIT_CaptureWBOIT(in int2 screenAddress, in float4 color, in float depth)
 {
 	uint flags = Permutation::ExtraFeatureDescriptor >> OIT_FEATURE_FLAGS_SHIFT;
-	WBOITResult empty;
+#if OIT_WRITE_DEPTH
+	flags |= OIT_FLAGS_DEPTH_WRITE; // Force enable depth write (for lighting shader right now)
+#endif	
+WBOITResult empty;
 	empty.accumAll = 0.0.xxxx;
 	empty.revealage = 1.0.xxxx;
 	empty.accumFront = 0.0.xxxx;

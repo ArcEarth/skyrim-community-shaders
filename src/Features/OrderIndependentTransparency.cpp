@@ -25,7 +25,6 @@ static void NormalizeSettings(OrderIndependentTransparency::Settings& settings)
 	if (settings.Method == OrderIndependentTransparency::Method::OIT_BLENDED)
 	{
 		settings.UsePixelShader = true;
-		settings.WriteDepth = false;
 	}
 }
 
@@ -276,7 +275,7 @@ void OrderIndependentTransparency::DrawSettings()
 		dirtied.CompositionShader |= ImGui::Checkbox("Write Depth (*)", &settings.WriteDepth);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Allow OIT composition to write depth when meshes have the 'Write Depth' flag.\n"
-						"(*) Weighted blended OIT does not currently support depth writes.");
+						"(*) Requires pixel shader resolve, which blended OIT already uses.");
 		}
 		if (!settings.UsePixelShader) ImGui::EndDisabled();
 		ImGui::TreePop();
@@ -366,7 +365,8 @@ void OrderIndependentTransparency::RestoreDefaultSettings()
 
 void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format, uint bindFlags);
 
-static void CreateWBOITRenderTarget(std::optional<Texture2D>& texture, std::string_view name, const D3D11_TEXTURE2D_DESC& baseDesc, DXGI_FORMAT format)
+// Create texture with both SRV and RTV
+static void CreateTextureSR(std::optional<Texture2D>& texture, std::string_view name, const D3D11_TEXTURE2D_DESC& baseDesc, DXGI_FORMAT format)
 {
 	auto texDesc = baseDesc;
 	texDesc.Format = format;
@@ -459,9 +459,9 @@ void OrderIndependentTransparency::SetupResources()
 			return;
 		}
 		try {
-			CreateWBOITRenderTarget(wboitFrontAccumalationBuffer, "OIT Front Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
-			CreateWBOITRenderTarget(wboitAccumalationBuffer, "OIT Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
-			CreateWBOITRenderTarget(wboitRevealageBuffer, "OIT Revealage", mainDesc, DXGI_FORMAT_R16G16_FLOAT);
+			CreateTextureSR(accumalationBuffer, "OIT Front Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateTextureSR(accumalationWaterBuffer, "OIT Accumalation", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
+			CreateTextureSR(revealageBuffer, "OIT Revealage", mainDesc, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		} catch (const DX::com_exception& e) {
 			logger::error("Failed to create weighted blended OIT render targets: {}", e.what());
 			return;
@@ -487,10 +487,10 @@ void OrderIndependentTransparency::SetupResources()
 			rt.SrcBlend = D3D11_BLEND_ZERO;
 			rt.DestBlend = D3D11_BLEND_SRC_COLOR;
 			rt.BlendOp = D3D11_BLEND_OP_ADD;
-			rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+			rt.SrcBlendAlpha = D3D11_BLEND_ONE;
 			rt.DestBlendAlpha = D3D11_BLEND_ONE;
-			rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN;
+			rt.BlendOpAlpha = D3D11_BLEND_OP_MIN;
+			rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_ALPHA;
 		}
 		try {
 			DX::ThrowIfFailed(device->CreateBlendState(&wboitBlendDesc, wboitBlendState.put()));
@@ -607,7 +607,7 @@ void OrderIndependentTransparency::CompileShaders()
 		}
 	}
 	if (/*settings.Method == OIT_BLENDED && */!psBlend) {
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_BLENDED", "1" }, { "OIT_WRITE_DEPTH", "0" } }, "ps_5_0"))) {
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\OIT\\OITResolve.ps.hlsl", { { "OIT_BLENDED", "1" }, { "OIT_WRITE_DEPTH", writeDepthDefine } }, "ps_5_0"))) {
 			psBlend.attach(rawPtr);
 		} else {
 			logger::error("Failed to compile Order Independent Transparency blend pixel shader.");
@@ -888,8 +888,8 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	if (settings.Method == OIT_BLENDED)
 	{
 		static constexpr float clearAccum[4] = { 0, 0, 0, 0 };
-		static constexpr float clearRevealage[4] = { 1, 1, 1, 1 };
-		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV, wboitFrontAccumalationBuffer->rtv.get(), wboitAccumalationBuffer->rtv.get(), wboitRevealageBuffer->rtv.get() };
+		static constexpr float clearRevealage[4] = { 1, 1, 0, 1 };
+		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV, accumalationBuffer->rtv.get(), accumalationWaterBuffer->rtv.get(), revealageBuffer->rtv.get() };
 		context->ClearRenderTargetView(rtvs[3], clearAccum);
 		context->ClearRenderTargetView(rtvs[4], clearAccum);
 		context->ClearRenderTargetView(rtvs[5], clearRevealage);
@@ -1066,10 +1066,11 @@ void OrderIndependentTransparency::EndAlphaGroup()
 
 		if (settings.Method == Method::OIT_BLENDED)
 		{
-			ID3D11ShaderResourceView* srvs[3] = {
-				wboitFrontAccumalationBuffer->srv.get(),
-				wboitAccumalationBuffer->srv.get(),
-				wboitRevealageBuffer->srv.get()
+			ID3D11ShaderResourceView* srvs[4] = {
+				accumalationBuffer->srv.get(),
+				accumalationWaterBuffer->srv.get(),
+				revealageBuffer->srv.get(),
+				waterDepthSrv
 			};
 			ScopedShaderResource srvGuard(shader, srvs, 0);
 			context->Draw(3, 0);

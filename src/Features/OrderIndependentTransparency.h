@@ -112,9 +112,9 @@ struct OrderIndependentTransparency : Feature
 	std::optional<Texture2D>					headerBuffer; // RUINT32, Fragement list header buffer or clear mask
 	std::optional<Buffer>						nodesBuffer;  // Fragement list nodes buffer
 	// OIT_BLENDED
-	std::optional<Texture2D>					wboitFrontAccumalationBuffer; // RGBA16F, transparent layers in front of water
-	std::optional<Texture2D>					wboitAccumalationBuffer;      // RGBA16F, all transparent layers
-	std::optional<Texture2D>					wboitRevealageBuffer;         // RG16F, x = all layers, y = front of water
+	std::optional<Texture2D>					accumalationBuffer;      // RGBA16F, transparent layers in front of water, blend to main color buffer
+	std::optional<Texture2D>					accumalationWaterBuffer;  // RGBA16F, all transparent layers, blend to alpha only buffer for SSR next frame
+	std::optional<Texture2D>					revealageBuffer;         // RGBA16F, x/y = revealage, w = min write-depth
 	// OIT_RVO
 	std::optional<Buffer>						colorBuffer; // RWStructuredBuffer<uint4[OIT_NODE_COUNTS]>
 	std::optional<Buffer>						depthBuffer; // RWStructuredBuffer<float4[OIT_NODE_COUNTS]>

@@ -13,6 +13,7 @@
 #include <dxgi1_4.h>
 #include <dxgi1_6.h>
 #include <imgui.h>
+#include "OrderIndependentTransparency.h"
 
 // Win11 24H2 display config types. Compat_ prefix avoids collision with SDK enum members.
 typedef enum
@@ -958,7 +959,7 @@ namespace
 	{
 		static void WINAPI thunk(ID3D11DeviceContext* This, ID3D11BlendState* pBlendState, const FLOAT BlendFactor[4], UINT SampleMask)
 		{
-			if (pBlendState && !globals::game::isVR) {
+			if (pBlendState && !globals::game::isVR && !globals::features::orderIndependentTransparency.inAlphaPass) {
 				auto& hdr = globals::features::hdrDisplay;
 				const bool d3d11HdrCapture = hdr.loaded && hdr.settings.enableHDR && hdr.uiTexture;
 				const bool fgCapture = globals::features::upscaling.d3d12SwapChainActive;
