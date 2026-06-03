@@ -91,8 +91,8 @@ void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor
 
 		float depth;
 		uint flags;
-		FL_UnpackDepthAndFlags(node.depth, depth, flags);
-		float4 nodeColor = FL_UnpackColor(node.color);
+		FL_UnpackDepthAndFlags(node.packedDepthAndFlags, depth, flags);
+		float4 nodeColor = FL_UnpackColor(node.packedColorRG, node.packedColorBA);
 
 		[flatten]
 		if (depth > waterDepth)
@@ -117,12 +117,12 @@ void AOITResolve(uint2 screenAddress, out float4 ocolor, out float4 owcolor
 
 		float depth;
 		uint flags;
-		FL_UnpackDepthAndFlags(node.depth, depth, flags);
+		FL_UnpackDepthAndFlags(node.packedDepthAndFlags, depth, flags);
 #if OIT_WRITE_DEPTH
 		if (flags & OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
 #endif
 		
-		float4 nodeColor = FL_UnpackColor(node.color);
+		float4 nodeColor = FL_UnpackColor(node.packedColorRG, node.packedColorBA);
 		
 		AOITFragment frag = AOITFindFragment(data, depth);
 		float vis = frag.index == 0 ? 1.0f : frag.transA;
@@ -181,11 +181,11 @@ void WeightBlendedOITResolve(uint2 screenAddress, out float4 ocolor, out float4 
 
 		float depth;
 		uint flags;
-		FL_UnpackDepthAndFlags(node.depth, depth, flags);
+		FL_UnpackDepthAndFlags(node.packedDepthAndFlags, depth, flags);
 #if OIT_WRITE_DEPTH
 		if (flags & OIT_FLAGS_DEPTH_WRITE) odepth = min(odepth, depth);
 #endif
-		float4 color = FL_UnpackColor(node.color);
+		float4 color = FL_UnpackColor(node.packedColorRG, node.packedColorBA);
 		float a = max(0.01, color.w); // wboit does not support additive natrually
 	
 		//float w = 1.f; // weight(alpha, depth), just need to be higher for closer layers

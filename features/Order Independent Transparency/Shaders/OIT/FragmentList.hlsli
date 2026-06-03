@@ -26,8 +26,9 @@
 struct FragmentListNode
 {
 	uint next;
-	float depth;
-	uint color;
+	float packedDepthAndFlags;
+	uint packedColorRG;
+	uint packedColorBA;
 };
 
 //////////////////////////////////////////////
@@ -52,44 +53,40 @@ int2 FL_GetDimensions()
 	return dim;
 }
 
-// flags have 4 bits
+static const float FL_HALF_MAX = 65504.0;
+
 float FL_PackDepthAndFlags(in float depth, in uint flags)
 {
-#if OIT_WRITE_DEPTH
-	// return -depth;
-	return !(flags & OIT_FLAGS_DEPTH_WRITE) ? depth : -depth;
-#else
-	return depth;
-#endif
-	//return asfloat((asuint(depth) & 0xFFFFFFF0UL) | flags);
+	float packedDepth = saturate(1.0 - depth);
+	return (flags & OIT_FLAGS_DEPTH_WRITE) ? -packedDepth : packedDepth;
 }
 
-void FL_UnpackDepthAndFlags(in float packedDepthCovg, out float depth, out uint flags)
+void FL_UnpackDepthAndFlags(in float packedDepthAndFlags, out float depth, out uint flags)
 {
-	depth = abs(packedDepthCovg);
-	flags = packedDepthCovg < 0 ? OIT_FLAGS_DEPTH_WRITE : 0;
-	//uint uiPackedDepthCovg = asuint(packedDepthCovg);
-	//depth = asfloat(uiPackedDepthCovg & 0xFFFFFFF0UL);
-	//flags = uiPackedDepthCovg & 0xFUL;
+	depth = 1.0 - abs(packedDepthAndFlags);
+	flags = packedDepthAndFlags < 0 ? OIT_FLAGS_DEPTH_WRITE : 0;
 }
 
-float4 FL_UnpackColor(uint packedInput)
+uint FL_PackHalf2(in float2 unpackedInput)
 {
-	float4 unpackedOutput;
-	uint4 p = uint4((packedInput & 0xFFUL),
-					(packedInput >> 8UL) & 0xFFUL,
-					(packedInput >> 16UL) & 0xFFUL,
-					(packedInput >> 24UL));
-
-	unpackedOutput = ((float4) p) / 255;
-	return unpackedOutput;
+	uint2 packed = f32tof16(clamp(unpackedInput, 0.0.xx, FL_HALF_MAX.xx));
+	return packed.x | (packed.y << 16UL);
 }
 
-uint FL_PackColor(float4 unpackedInput)
+float2 FL_UnpackHalf2(in uint packedInput)
 {
-	uint4 u = (uint4) (saturate(unpackedInput) * 255 + 0.5);
-	uint packedOutput = (u.w << 24UL) | (u.z << 16UL) | (u.y << 8UL) | u.x;
-	return packedOutput;
+	return f16tof32(uint2(packedInput & 0xFFFFUL, packedInput >> 16UL));
+}
+
+uint2 FL_PackColor(in float4 unpackedInput)
+{
+	float4 clampedColor = clamp(unpackedInput, 0.0.xxxx, FL_HALF_MAX.xxxx);
+	return uint2(FL_PackHalf2(clampedColor.xy), FL_PackHalf2(clampedColor.zw));
+}
+
+float4 FL_UnpackColor(in uint packedColorRG, in uint packedColorBA)
+{
+	return float4(FL_UnpackHalf2(packedColorRG), FL_UnpackHalf2(packedColorBA));
 }
 
 
@@ -121,17 +118,18 @@ void FL_InsertNode(in int2 screenAddress, in uint newNodeAddress, in FragmentLis
 
 bool OIT_CaptureImpl(in int2 screenAddress, in float4 color, in float depth, uint flags)
 {
-	uint packed = FL_PackColor(color);
-	// discard fully transparent pixels
-	if (packed == 0x00000000UL)
+	uint2 packedColor = FL_PackColor(color);
+	// discard fully transparent black pixels
+	if (packedColor.x == 0 && packedColor.y == 0)
 		return true;
 
 	uint newNodeAddress;
 	if (FL_AllocNode(newNodeAddress))
 	{
 		FragmentListNode node;
-		node.color = packed;
-		node.depth = FL_PackDepthAndFlags(depth, flags);
+		node.packedDepthAndFlags = FL_PackDepthAndFlags(depth, flags);
+		node.packedColorRG = packedColor.x;
+		node.packedColorBA = packedColor.y;
 		FL_InsertNode(screenAddress, newNodeAddress, node);
 		return true;
 	}

@@ -102,9 +102,12 @@ struct OrderIndependentTransparency : Feature
 	struct FragmentListNode
 	{
 		uint next;
-		float depth;
-		uint color;
+		float packedDepthAndFlags;
+		uint packedColorRG;
+		uint packedColorBA;
 	};
+
+	static_assert(sizeof(FragmentListNode) == 16);
 
 	// GPU Resources
 

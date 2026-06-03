@@ -183,7 +183,7 @@ void OrderIndependentTransparency::DrawSettings()
 					}
 				}
 			}
-			if (PixelBuffer) {
+			if (PixelBuffer || ShaderDefines) {
 				auto* renderer = globals::game::renderer;
 				auto& mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 				D3D11_TEXTURE2D_DESC mainDesc;
@@ -655,6 +655,9 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 		logger::error("Failed to create {} SRV: {}", name, e.what());
 		return;
 	}
+	if (!buffer->srv) {
+		logger::error("Failed to create {} SRV", name);
+	}
 
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
 	uavDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -668,10 +671,15 @@ static void CreateStructBuffer(std::optional<Buffer>& buffer, std::string_view n
 		logger::error("Failed to create {} UAV: {}", name, e.what());
 		return;
 	}
+	if (!buffer->uav)
+	{
+		logger::error("Failed to create {} UAV", name);
+	}
 }
 
 void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
 {
+	logger::info("[OIT] Requested Setup Pixel Buffers {}", numElem);
 	if (settings.Method == Method::OIT_RVO)
 	{
 		uint NodeCount = GetNodeCount();
@@ -680,6 +688,7 @@ void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
 		uint colorBufferBytes = colorBufferStride * numElem;
 		if (!colorBuffer.has_value() || colorBuffer->desc.ByteWidth != colorBufferBytes || colorBuffer->desc.StructureByteStride != colorBufferStride)
 		{
+			logger::info("[OIT] Creating AOIT Buffers {} * {}", numElem, NodeCount);
 			CreateStructBuffer(colorBuffer, "OIT Color", numElem, colorBufferStride);
 			CreateStructBuffer(depthBuffer, "OIT Depth", numElem, depthBufferStride);
 		}
@@ -687,8 +696,9 @@ void OrderIndependentTransparency::SetupPixelBuffers(uint numElem)
 	else if (settings.Method == Method::OIT_AT || settings.Method == Method::OIT_VISUALIZE)
 	{
 		uint BufferSize = settings.BufferSize * numElem;
-		if (!nodesBuffer.has_value() || featureCB.MaxListNodes != BufferSize)
+		if (!nodesBuffer.has_value() || nodesBuffer->desc.ByteWidth != BufferSize * sizeof(FragmentListNode))
 		{
+			logger::info("[OIT] Creating Fragment List Buffers {} * {}", numElem, settings.BufferSize);
 			featureCB.MaxListNodes = BufferSize;
 			CreateStructBuffer(nodesBuffer, "OIT Nodes", BufferSize, sizeof(FragmentListNode), true);
 		}
@@ -908,6 +918,11 @@ void OrderIndependentTransparency::BeginAlphaGroup()
 	}
 	else
 	{
+		if (headerBuffer->uav == nullptr || nodesBuffer->uav == nullptr) 
+		{
+			logger::error("Failed to get UAVs for OIT capture pass.");
+		}
+
 		rtvs = { main.RTV, TAAMask.RTV, alphaOnly.RTV };
 		uavs = { headerBuffer->uav.get(), nodesBuffer->uav.get(), nullptr };
 		context->OMSetRenderTargetsAndUnorderedAccessViews(3, rtvs.data(), dsv, 3, 2, uavs.data(), uavcounters);
